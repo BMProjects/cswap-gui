@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#D97757"/>
+  <!-- account 2 (back) -->
+  <circle cx="84" cy="40" r="12" fill="#F5C9B3"/>
+  <path d="M66 78c0-12 8-19 18-19s18 7 18 19v5H66z" fill="#F5C9B3"/>
+  <!-- account 1 (front) -->
+  <circle cx="46" cy="44" r="15" fill="#FFF1E8"/>
+  <path d="M22 86c0-14 11-23 24-23s24 9 24 23v6H22z" fill="#FFF1E8"/>
+  <!-- double-headed swap arrow -->
+  <g stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M42 105h44"/>
+    <path d="M77 96l9 9-9 9"/>
+    <path d="M51 96l-9 9 9 9"/>
+  </g>
+</svg>
