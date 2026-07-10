@@ -26,10 +26,18 @@ using only the Python standard library.
   get a ⚠ warning, and switching to them prompts to fix via `/login` +
   `cswap --add-account` first
 - One-click "add current account" and "upgrade cswap"
-- Optional auto-refresh (checkbox, every 60 s): quotas update by
-  themselves and the status bar shows the last update time;
-  auto-refresh failures only appear in the status bar instead of
-  popping up dialogs
+- Auto-refresh every 60 s (on by default, checkbox to disable):
+  quotas update by themselves and the status bar shows the last
+  update time; auto-refresh failures only appear in the status bar
+  instead of popping up dialogs
+- Resilient display during token hiccups: when an account's status
+  turns `token_expired` / `relogin_required` / `unavailable`, the GUI
+  keeps showing the last good usage bars (with an accumulating age
+  label) alongside the status note, instead of blanking out —
+  a long-open window recovers by itself on the next good tick
+- Handles cswap 0.19's `relogin_required` status (dead refresh token,
+  account quarantined): flagged like other credential problems, with
+  a hint to `/login` + `cswap --add-account`
 
 ## Dependencies
 

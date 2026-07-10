@@ -19,9 +19,10 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 BASE_WINDOWS = (("fiveHour", "5h"), ("sevenDay", "7d"))
-STALE_STATUSES = frozenset({"no_credentials", "token_expired"})
+STALE_STATUSES = frozenset({"no_credentials", "token_expired", "relogin_required"})
 STATUS_NOTES = {
-    "token_expired": "令牌已过期",
+    "token_expired": "令牌已过期（Claude Code 使用中，其下次请求后自动恢复）",
+    "relogin_required": "需重新登录：先在 Claude CLI /login，再 cswap --add-account",
     "no_credentials": "凭据缺失",
     "keychain_unavailable": "钥匙串不可用",
     "unavailable": "用量获取失败",
@@ -107,6 +108,26 @@ def parse_accounts(json_text: str) -> list[dict]:
     return accounts
 
 
+def merge_last_good(accounts: list[dict], cache: dict, now: float) -> list[dict]:
+    """Session-memory fallback: keep showing the last good usage of an
+    account whose current status is not "ok" (token expired, re-login
+    needed, fetch failure), with its age accumulated so the staleness
+    note stays honest. In-memory only — nothing is written to disk."""
+    for account in accounts:
+        email = account["email"]
+        if account["usage"]:
+            cache[email] = {
+                "usage": account["usage"],
+                "age_seconds": account["age_seconds"] or 0.0,
+                "at": now,
+            }
+        elif email in cache:
+            saved = cache[email]
+            account["usage"] = saved["usage"]
+            account["age_seconds"] = saved["age_seconds"] + (now - saved["at"])
+    return accounts
+
+
 def format_age(seconds: float | None) -> str | None:
     """Human-readable age of a usage measurement; None when fresh enough."""
     if seconds is None or seconds < AGE_NOTE_THRESHOLD_S:
@@ -136,7 +157,7 @@ class CswapGui:
         ttk.Button(button_row, text="添加当前登录账号", command=self.add_account).pack(
             side="left", padx=6
         )
-        self.auto_refresh_var = tk.BooleanVar(value=False)
+        self.auto_refresh_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             button_row,
             text="每分钟自动刷新",
@@ -151,6 +172,7 @@ class CswapGui:
         self._upgrade_seconds = 0
         self._refreshing = False
         self._auto_job: str | None = None
+        self._last_good: dict[str, dict] = {}
 
         self.message_var = tk.StringVar(value="加载中…")
         ttk.Label(root, textvariable=self.message_var, foreground="gray").pack(
@@ -158,6 +180,7 @@ class CswapGui:
         )
 
         self.refresh()
+        self._toggle_auto_refresh()
 
     def run_async(self, work, on_done, on_error=None, notify: bool = True) -> None:
         def task() -> None:
@@ -192,7 +215,7 @@ class CswapGui:
 
     def _on_refresh_done(self, accounts: list[dict]) -> None:
         self._refreshing = False
-        self.show_accounts(accounts)
+        self.show_accounts(merge_last_good(accounts, self._last_good, time.time()))
 
     def _on_refresh_error(self, message: str) -> None:
         self._refreshing = False
@@ -246,9 +269,17 @@ class CswapGui:
                 switch_button.state(["disabled"])
             switch_button.pack(side="right")
 
+            if account["status"] != "ok":
+                note = STATUS_NOTES.get(
+                    account["status"], f"暂无数据（{account['status']}）"
+                )
+                ttk.Label(
+                    card,
+                    text=note,
+                    foreground="#B8860B" if account["stale"] else "gray",
+                ).pack(anchor="w")
+
             if not account["usage"]:
-                note = STATUS_NOTES.get(account["status"], "暂无数据")
-                ttk.Label(card, text=note, foreground="gray").pack(anchor="w")
                 continue
 
             age = format_age(account["age_seconds"])
