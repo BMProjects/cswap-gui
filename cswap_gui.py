@@ -85,9 +85,7 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure("Muted.TLabel", foreground=p["muted"])
     style.configure("Card.TFrame", relief="solid", borderwidth=1)
     style.configure("TButton", padding=(10, 4))
-    style.map(
-        "TButton", background=[("pressed", p["trough"]), ("active", p["hover"])]
-    )
+    style.map("TButton", background=[("pressed", p["trough"]), ("active", p["hover"])])
     style.configure(
         "Accent.TButton",
         background=p["accent"],
@@ -385,9 +383,9 @@ class CswapGui:
 
             age = format_age(account["age_seconds"])
             if age is not None:
-                ttk.Label(
-                    card, text=f"用量为 {age} 前数据", style="Muted.TLabel"
-                ).pack(anchor="w")
+                ttk.Label(card, text=f"用量为 {age} 前数据", style="Muted.TLabel").pack(
+                    anchor="w"
+                )
 
             for window, usage in account["usage"].items():
                 row = ttk.Frame(card)
