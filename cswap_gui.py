@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, ttk
 
 BASE_WINDOWS = (("fiveHour", "5h"), ("sevenDay", "7d"))
@@ -33,6 +34,90 @@ AGE_NOTE_THRESHOLD_S = 900
 # 模型 token;cswap 自带 30s 结果缓存(SERVE_TTL_S)和失败退避,60s 间隔
 # 每次最多产生账号数个轻量 GET。
 AUTO_REFRESH_INTERVAL_MS = 60_000
+# 进度条按用量分级变色:绿(宽裕)/琥珀(过半)/红(接近上限)。
+USAGE_BAR_COLORS = (("Low", "#4CAF50"), ("Mid", "#E8A33D"), ("High", "#D9534F"))
+USAGE_MID_PCT = 50
+USAGE_HIGH_PCT = 80
+# 深色主题(stdlib ttk 'clam' 自定义),无第三方依赖。统一背景色,
+# 卡片仅以细边框区分,自定义样式压到最少。
+PALETTE = {
+    "bg": "#26282B",
+    "text": "#E4E6EA",
+    "muted": "#9AA0A8",
+    "border": "#3F4248",
+    "trough": "#3A3D42",
+    "hover": "#34373C",
+    "accent": "#3D74D9",
+    "accent_active": "#4A83F5",
+    "disabled": "#4A4D52",
+}
+STALE_FG = "#E0B341"
+
+
+def usage_style(percent: float) -> str:
+    """ttk progressbar style name for a usage percentage."""
+    if percent >= USAGE_HIGH_PCT:
+        level = "High"
+    elif percent >= USAGE_MID_PCT:
+        level = "Mid"
+    else:
+        level = "Low"
+    return f"{level}.Usage.Horizontal.TProgressbar"
+
+
+def apply_theme(root: tk.Tk) -> None:
+    """Dark theme built on the stdlib 'clam' theme: one shared background,
+    thin-border cards, accent switch button, color-graded usage bars."""
+    p = PALETTE
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    root.configure(background=p["bg"])
+    style.configure(
+        ".",
+        background=p["bg"],
+        foreground=p["text"],
+        bordercolor=p["border"],
+        lightcolor=p["bg"],
+        darkcolor=p["bg"],
+        troughcolor=p["trough"],
+        focuscolor=p["accent"],
+    )
+    style.configure("Muted.TLabel", foreground=p["muted"])
+    style.configure("Card.TFrame", relief="solid", borderwidth=1)
+    style.configure("TButton", padding=(10, 4))
+    style.map(
+        "TButton", background=[("pressed", p["trough"]), ("active", p["hover"])]
+    )
+    style.configure(
+        "Accent.TButton",
+        background=p["accent"],
+        foreground="white",
+        bordercolor=p["accent"],
+        lightcolor=p["accent"],
+        darkcolor=p["accent"],
+    )
+    style.map(
+        "Accent.TButton",
+        background=[("disabled", p["disabled"]), ("active", p["accent_active"])],
+        bordercolor=[("disabled", p["disabled"])],
+        lightcolor=[("disabled", p["disabled"]), ("active", p["accent_active"])],
+        darkcolor=[("disabled", p["disabled"]), ("active", p["accent_active"])],
+    )
+    style.configure(
+        "TCheckbutton",
+        indicatorbackground=p["trough"],
+        indicatorforeground=p["text"],
+    )
+    style.map("TCheckbutton", background=[("active", p["bg"])])
+    for level, color in USAGE_BAR_COLORS:
+        style.configure(
+            f"{level}.Usage.Horizontal.TProgressbar",
+            thickness=12,
+            background=color,
+            bordercolor=p["trough"],
+            lightcolor=color,
+            darkcolor=color,
+        )
 
 
 def find_cswap() -> str:
@@ -145,11 +230,14 @@ class CswapGui:
         root.title("Claude 账号切换")
         root.minsize(460, 220)
 
-        style = ttk.Style(root)
-        style.configure("Usage.Horizontal.TProgressbar", thickness=10)
+        apply_theme(root)
+
+        base_font = tkfont.nametofont("TkDefaultFont")
+        self.title_font = base_font.copy()
+        self.title_font.configure(weight="bold", size=base_font.actual("size") + 1)
 
         self.accounts_frame = ttk.Frame(root)
-        self.accounts_frame.pack(fill="both", expand=True, padx=12, pady=(10, 0))
+        self.accounts_frame.pack(fill="both", expand=True, padx=12, pady=(12, 0))
 
         button_row = ttk.Frame(root)
         button_row.pack(fill="x", padx=12, pady=8)
@@ -175,7 +263,7 @@ class CswapGui:
         self._last_good: dict[str, dict] = {}
 
         self.message_var = tk.StringVar(value="加载中…")
-        ttk.Label(root, textvariable=self.message_var, foreground="gray").pack(
+        ttk.Label(root, textvariable=self.message_var, style="Muted.TLabel").pack(
             anchor="w", padx=12, pady=(0, 8)
         )
 
@@ -246,7 +334,7 @@ class CswapGui:
             ttk.Label(
                 self.accounts_frame,
                 justify="left",
-                foreground="gray",
+                style="Muted.TLabel",
                 text=(
                     "尚未添加任何账号。\n\n"
                     "1. 在终端运行 claude，用 /login 登录目标账号\n"
@@ -256,8 +344,8 @@ class CswapGui:
             ).pack(anchor="w", pady=12)
 
         for account in accounts:
-            card = ttk.LabelFrame(self.accounts_frame, padding=(8, 4))
-            card.pack(fill="x", pady=4)
+            card = ttk.Frame(self.accounts_frame, padding=(12, 8), style="Card.TFrame")
+            card.pack(fill="x", pady=6)
 
             header = ttk.Frame(card)
             header.pack(fill="x")
@@ -270,12 +358,13 @@ class CswapGui:
             ttk.Label(
                 header,
                 text=title,
-                font=("", 10, "bold"),
-                foreground="#B8860B" if stale else "",
+                font=self.title_font,
+                foreground=STALE_FG if stale else "",
             ).pack(side="left")
             switch_button = ttk.Button(
                 header,
                 text="切换（需先修复）" if stale else "切换到此账号",
+                style="Accent.TButton",
                 command=lambda account=account: self.switch_to(account),
             )
             if account["active"]:
@@ -286,28 +375,27 @@ class CswapGui:
                 note = STATUS_NOTES.get(
                     account["status"], f"暂无数据（{account['status']}）"
                 )
-                ttk.Label(
-                    card,
-                    text=note,
-                    foreground="#B8860B" if account["stale"] else "gray",
-                ).pack(anchor="w")
+                note_label = ttk.Label(card, text=note, style="Muted.TLabel")
+                if account["stale"]:
+                    note_label.configure(foreground=STALE_FG)
+                note_label.pack(anchor="w")
 
             if not account["usage"]:
                 continue
 
             age = format_age(account["age_seconds"])
             if age is not None:
-                ttk.Label(card, text=f"用量为 {age} 前数据", foreground="gray").pack(
-                    anchor="w"
-                )
+                ttk.Label(
+                    card, text=f"用量为 {age} 前数据", style="Muted.TLabel"
+                ).pack(anchor="w")
 
             for window, usage in account["usage"].items():
                 row = ttk.Frame(card)
-                row.pack(fill="x", pady=1)
+                row.pack(fill="x", pady=2)
                 ttk.Label(row, text=window, width=6).pack(side="left")
                 bar = ttk.Progressbar(
                     row,
-                    style="Usage.Horizontal.TProgressbar",
+                    style=usage_style(usage["percent"]),
                     maximum=100,
                     value=usage["percent"],
                     length=140,
@@ -316,7 +404,7 @@ class CswapGui:
                 detail = f"{usage['percent']:3.0f}%"
                 if usage["reset"] is not None:
                     detail += f"  重置 {usage['reset']}（剩 {usage['remaining']}）"
-                ttk.Label(row, text=detail, foreground="gray").pack(side="left")
+                ttk.Label(row, text=detail, style="Muted.TLabel").pack(side="left")
 
         self.message_var.set(
             f"共 {len(accounts)} 个账号 · {time.strftime('%H:%M:%S')} 更新"
