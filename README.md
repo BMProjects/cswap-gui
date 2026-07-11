@@ -97,16 +97,17 @@ GET per account per tick — safe and negligible.
 
 ## Companion timers (optional, for reference)
 
-These are the author's own systemd user timers. The GUI does not
-depend on them; they are listed as a reference for the same
-quota-management setup:
+This is the author's own systemd user timer. The GUI does not depend
+on it; it is listed as a reference for the same quota-management
+setup:
 
 | Unit | Schedule | Purpose |
 |------|----------|---------|
 | `ai-cli-maintenance.timer` | daily 05:00 + 3 min after boot | upgrade the CLIs, then send one minimal haiku request so the 5h quota window starts early in the day (Fable is a weekly quota — no warmup needed) |
-| `claude-swap-update.timer` | Mondays 00:00 | `uv tool upgrade claude-swap` |
 
-Unit files live in `~/.config/systemd/user/`.
+Unit files live in `~/.config/systemd/user/`. Keeping claude-swap
+itself up to date is done on demand via the GUI's "upgrade cswap"
+button (a former weekly auto-upgrade timer has been retired).
 
 ## Acknowledgements
 
