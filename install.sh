@@ -8,6 +8,11 @@ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="$DATA_HOME/applications"
 ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
 
+if ! python3 -c 'import tkinter' >/dev/null 2>&1; then
+    echo "警告: 系统 python3 缺少 tkinter,GUI 暂时无法启动。" >&2
+    echo "请运行: sudo apt install python3-tk (装好后无需重跑本脚本)" >&2
+fi
+
 mkdir -p "$APP_DIR" "$ICON_DIR"
 sed "s|@PROJECT_DIR@|$PROJECT_DIR|" "$PROJECT_DIR/cswap-gui.desktop" \
     > "$APP_DIR/cswap-gui.desktop"
