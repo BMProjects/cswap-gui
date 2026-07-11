@@ -157,7 +157,7 @@ class CswapGui:
         ttk.Button(button_row, text="添加当前登录账号", command=self.add_account).pack(
             side="left", padx=6
         )
-        self.auto_refresh_var = tk.BooleanVar(value=True)
+        self.auto_refresh_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             button_row,
             text="每分钟自动刷新",
