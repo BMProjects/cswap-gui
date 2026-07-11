@@ -242,6 +242,19 @@ class CswapGui:
         for child in self.accounts_frame.winfo_children():
             child.destroy()
 
+        if not accounts:
+            ttk.Label(
+                self.accounts_frame,
+                justify="left",
+                foreground="gray",
+                text=(
+                    "尚未添加任何账号。\n\n"
+                    "1. 在终端运行 claude，用 /login 登录目标账号\n"
+                    "2. 点击下方「添加当前登录账号」\n\n"
+                    "多账号：换号登录后重复以上步骤。"
+                ),
+            ).pack(anchor="w", pady=12)
+
         for account in accounts:
             card = ttk.LabelFrame(self.accounts_frame, padding=(8, 4))
             card.pack(fill="x", pady=4)
