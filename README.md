@@ -26,10 +26,13 @@ using only the Python standard library.
   get a ⚠ warning, and switching to them prompts to fix via `/login` +
   `cswap --add-account` first
 - One-click "add current account" and "upgrade cswap"
-- Optional auto-refresh every 60 s (off by default, enable via the
-  checkbox): quotas update by themselves and the status bar shows the
-  last update time; auto-refresh failures only appear in the status
-  bar instead of popping up dialogs
+- Optional auto-refresh every 5 minutes (off by default, enable via
+  the checkbox). It refreshes **only the active account**, via
+  `cswap --status --json`, so accounts you have switched away from
+  are never polled and spend nothing from their own rate-limit
+  budget. The manual "刷新" button still refreshes every account via
+  `cswap --list --json`. Auto-refresh failures only appear in the
+  status bar instead of popping up dialogs
 - Resilient display during token hiccups: when an account's status
   turns `token_expired` / `relogin_required` / `unavailable`, the GUI
   keeps showing the last good usage bars (with an accumulating age
@@ -81,19 +84,31 @@ delete those two installed files.
 No. The usage query goes to the read-only metadata endpoint
 `GET https://api.anthropic.com/api/oauth/usage` (the same one Claude
 Code's built-in `/usage` command uses). It triggers no model inference
-and counts against no quota window. The only theoretical risk of
-frequent polling is HTTP 429 rate limiting on that endpoint itself,
-and cswap already guards against it — the GUI benefits directly:
+and counts against no quota window.
 
-- 30-second result cache (`SERVE_TTL_S`): repeated queries within 30 s
-  are served from cache with zero network requests
-- Failure backoff: exponential 30 s · 2ⁿ (capped at 10 minutes),
-  honouring the server's `Retry-After`
+The real constraint is **HTTP 429 rate limiting on that endpoint**.
+Per cswap's own measurements (`poll_policy.py`), the budget is roughly
+**28-30 requests per rolling 60-minute window, per token**, and it is
+not a leaky bucket: capacity returns only as old requests age out of
+the trailing hour, so a burst can saturate a token for a full hour and
+pausing does not restore headroom early.
+
+The GUI is deliberately conservative about this:
+
+- Auto-refresh is **off by default**, and when enabled runs every
+  5 minutes (12/hour) — comfortably under cswap's own ≤20/hour target,
+  leaving headroom for manual commands and other surfaces
+- Auto-refresh queries **only the active account**; switched-away
+  accounts are never polled
+- cswap itself adds a 180 s shared cache (multiple open surfaces do
+  not multiply requests), a 360 s floor for an hour after any 429, and
+  AIMD backoff up to 30 minutes on a contended token
 - Credential safety: while Claude Code is running, the active
   account's OAuth token is never refreshed (avoids refresh races)
 
-A 60-second auto-refresh therefore produces at most one lightweight
-GET per account per tick — safe and negligible.
+Worth knowing: if an account breaks (expired subscription, dead
+credentials), its failing fetches keep consuming that token's budget.
+Consider removing such an account until it is fixed.
 
 ## Companion timers (optional, for reference)
 

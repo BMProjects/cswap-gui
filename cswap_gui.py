@@ -30,12 +30,12 @@ STATUS_NOTES = {
     "api_key": "API key 账号，无订阅额度",
 }
 AGE_NOTE_THRESHOLD_S = 900
-# 自动刷新间隔,对齐 cswap poll_policy 的 SERVE_TTL_S / MIN_INTERVAL_S(均 180s)。
-# /api/oauth/usage 对每个 token 限流约 28-30 次/滚动小时,超限即 429;cswap 以
-# 180s 缓存兜底,比它新的条目直接由本地存储返回、不发网络请求,所以轮询再密也
-# 只是空转子进程。取 180s 让每次轮询恰好落在缓存过期点:既不多打接口,又能拿到
-# 真正的新数据。
-AUTO_REFRESH_INTERVAL_MS = 180_000
+# 自动刷新间隔。/api/oauth/usage 按 token 限流:滚动 60 分钟内约 28-30 次,且
+# 容量只在旧请求满一小时后才释放(不是漏桶),一次突发能占满整整一小时。cswap
+# poll_policy 的目标是每 token 平均 ≤20 次/小时,留 8-10 次余量给手动命令。
+# 5 分钟 = 12 次/小时,在 cswap 180s 缓存地板之上又明显低于目标线,把余量留给
+# 手动刷新、切换和 TUI 等其它入口。
+AUTO_REFRESH_INTERVAL_MS = 300_000
 # 启动 30 秒后自动检查并升级 cswap,每次启动仅执行一次;刻意错开自动刷新的节拍。
 AUTO_UPGRADE_DELAY_MS = 30_000
 # 进度条按用量分级变色:绿(宽裕)/琥珀(过半)/红(接近上限)。
@@ -161,6 +161,33 @@ def _parse_window(window: dict) -> dict:
     }
 
 
+def _parse_row(row: dict, active: bool) -> dict:
+    """One account row (shared by the --list and --status payloads, whose
+    usage fields are identical) into the display dict."""
+    raw_usage = row.get("usage") or {}
+    usage: dict[str, dict] = {}
+    for key, label in BASE_WINDOWS:
+        if key in raw_usage:
+            usage[label] = _parse_window(raw_usage[key])
+    for scoped in raw_usage.get("scoped", []):
+        usage[scoped["name"]] = _parse_window(scoped)
+    return {
+        "slot": str(row["number"]),
+        "email": row["email"],
+        "active": active,
+        "status": row["usageStatus"],
+        "stale": row["usageStatus"] in STALE_STATUSES,
+        "age_seconds": row.get("usageAgeSeconds"),
+        "usage": usage,
+    }
+
+
+def _check_schema(data: dict) -> None:
+    version = data.get("schemaVersion")
+    if version != 1:
+        raise ValueError(f"不支持的 cswap JSON schemaVersion: {version}")
+
+
 def parse_accounts(json_text: str) -> list[dict]:
     """Parse `cswap --list --json` output into account dicts for display.
 
@@ -169,29 +196,39 @@ def parse_accounts(json_text: str) -> list[dict]:
     empty usage dict; credential problems are flagged via "stale".
     """
     data = json.loads(json_text)
-    version = data.get("schemaVersion")
-    if version != 1:
-        raise ValueError(f"不支持的 cswap JSON schemaVersion: {version}")
-    accounts: list[dict] = []
-    for row in data["accounts"]:
-        raw_usage = row.get("usage") or {}
-        usage: dict[str, dict] = {}
-        for key, label in BASE_WINDOWS:
-            if key in raw_usage:
-                usage[label] = _parse_window(raw_usage[key])
-        for scoped in raw_usage.get("scoped", []):
-            usage[scoped["name"]] = _parse_window(scoped)
-        accounts.append(
-            {
-                "slot": str(row["number"]),
-                "email": row["email"],
-                "active": row["active"],
-                "status": row["usageStatus"],
-                "stale": row["usageStatus"] in STALE_STATUSES,
-                "age_seconds": row.get("usageAgeSeconds"),
-                "usage": usage,
-            }
-        )
+    _check_schema(data)
+    return [_parse_row(row, row["active"]) for row in data["accounts"]]
+
+
+def parse_active(json_text: str) -> dict | None:
+    """Parse `cswap --status --json` into one account dict, or None when
+    there is no active account or it isn't managed by cswap.
+
+    Unlike --list, this touches a single slot: cswap fetches usage for the
+    active account only, leaving every other account's rolling per-token
+    request budget untouched.
+    """
+    data = json.loads(json_text)
+    _check_schema(data)
+    active = data.get("active")
+    if not active or not active.get("managed"):
+        return None
+    return _parse_row(active, active=True)
+
+
+def apply_active(accounts: list[dict], active: dict | None) -> list[dict]:
+    """Merge a --status result into the account list in place: refresh the
+    matching slot, mark every other account inactive (the active slot may
+    have moved since the last full refresh), and leave their usage as-is."""
+    if active is None:
+        return accounts
+    if not any(account["slot"] == active["slot"] for account in accounts):
+        return accounts
+    for index, account in enumerate(accounts):
+        if account["slot"] == active["slot"]:
+            accounts[index] = active
+        else:
+            account["active"] = False
     return accounts
 
 
@@ -250,13 +287,14 @@ class CswapGui:
         self.auto_refresh_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             button_row,
-            text="自动刷新（每 3 分钟）",
+            text="自动刷新（每 5 分钟，仅当前账号）",
             variable=self.auto_refresh_var,
             command=self._toggle_auto_refresh,
         ).pack(side="left", padx=6)
         self._refreshing = False
         self._auto_job: str | None = None
         self._last_good: dict[str, dict] = {}
+        self._accounts: list[dict] = []
 
         status_row = ttk.Frame(root)
         status_row.pack(fill="x", padx=12, pady=(0, 8))
@@ -294,7 +332,8 @@ class CswapGui:
 
         threading.Thread(target=task, daemon=True).start()
 
-    def refresh(self, auto: bool = False) -> None:
+    def refresh(self) -> None:
+        """Manual refresh: every account, via --list."""
         if self._refreshing:
             return
         self._refreshing = True
@@ -303,12 +342,33 @@ class CswapGui:
             lambda: parse_accounts(run_cswap_json("--list")),
             self._on_refresh_done,
             on_error=self._on_refresh_error,
-            notify=not auto,
+        )
+
+    def refresh_active(self) -> None:
+        """Auto refresh: the active account only, via --status. Accounts
+        switched away from keep their last displayed usage and cost no
+        request against their own per-token budget."""
+        if self._refreshing:
+            return
+        self._refreshing = True
+        self.run_async(
+            lambda: parse_active(run_cswap_json("--status")),
+            self._on_active_done,
+            on_error=self._on_refresh_error,
+            notify=False,
         )
 
     def _on_refresh_done(self, accounts: list[dict]) -> None:
         self._refreshing = False
-        self.show_accounts(merge_last_good(accounts, self._last_good, time.time()))
+        self._accounts = merge_last_good(accounts, self._last_good, time.time())
+        self.show_accounts(self._accounts)
+
+    def _on_active_done(self, active: dict | None) -> None:
+        self._refreshing = False
+        merged = apply_active(self._accounts, active)
+        self._accounts = merge_last_good(merged, self._last_good, time.time())
+        self.show_accounts(self._accounts)
+        self.message_var.set(f"当前账号 · {time.strftime('%H:%M:%S')} 更新")
 
     def _on_refresh_error(self, message: str) -> None:
         self._refreshing = False
@@ -340,7 +400,7 @@ class CswapGui:
         self._auto_job = None
         if not self.auto_refresh_var.get():
             return
-        self.refresh(auto=True)
+        self.refresh_active()
         self._auto_job = self.root.after(AUTO_REFRESH_INTERVAL_MS, self._auto_tick)
 
     def show_accounts(self, accounts: list[dict]) -> None:
@@ -445,8 +505,10 @@ class CswapGui:
                 return
         self.message_var.set(f"正在切换到账号 {slot}…")
         self.run_async(
+            # --status, not --list: the account just switched away from keeps
+            # its last displayed usage instead of spending a request.
             lambda: run_cswap("--switch-to", slot),
-            lambda output: (self.message_var.set(output), self.refresh()),
+            lambda output: (self.message_var.set(output), self.refresh_active()),
         )
 
     def add_account(self) -> None:
