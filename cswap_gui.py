@@ -30,10 +30,14 @@ STATUS_NOTES = {
     "api_key": "API key 账号，无订阅额度",
 }
 AGE_NOTE_THRESHOLD_S = 900
-# 自动刷新间隔。查询走 api.anthropic.com/api/oauth/usage 只读接口,不消耗
-# 模型 token;cswap 自带 30s 结果缓存(SERVE_TTL_S)和失败退避,60s 间隔
-# 每次最多产生账号数个轻量 GET。
-AUTO_REFRESH_INTERVAL_MS = 60_000
+# 自动刷新间隔,对齐 cswap poll_policy 的 SERVE_TTL_S / MIN_INTERVAL_S(均 180s)。
+# /api/oauth/usage 对每个 token 限流约 28-30 次/滚动小时,超限即 429;cswap 以
+# 180s 缓存兜底,比它新的条目直接由本地存储返回、不发网络请求,所以轮询再密也
+# 只是空转子进程。取 180s 让每次轮询恰好落在缓存过期点:既不多打接口,又能拿到
+# 真正的新数据。
+AUTO_REFRESH_INTERVAL_MS = 180_000
+# 启动 30 秒后自动检查并升级 cswap,每次启动仅执行一次;刻意错开自动刷新的节拍。
+AUTO_UPGRADE_DELAY_MS = 30_000
 # 进度条按用量分级变色:绿(宽裕)/琥珀(过半)/红(接近上限)。
 USAGE_BAR_COLORS = (("Low", "#4CAF50"), ("Mid", "#E8A33D"), ("High", "#D9534F"))
 USAGE_MID_PCT = 50
@@ -246,27 +250,30 @@ class CswapGui:
         self.auto_refresh_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             button_row,
-            text="每分钟自动刷新",
+            text="自动刷新（每 3 分钟）",
             variable=self.auto_refresh_var,
             command=self._toggle_auto_refresh,
         ).pack(side="left", padx=6)
-        self.upgrade_button = ttk.Button(
-            button_row, text="升级 cswap", command=self.upgrade
-        )
-        self.upgrade_button.pack(side="right")
-        self._upgrade_running = False
-        self._upgrade_seconds = 0
         self._refreshing = False
         self._auto_job: str | None = None
         self._last_good: dict[str, dict] = {}
 
+        status_row = ttk.Frame(root)
+        status_row.pack(fill="x", padx=12, pady=(0, 8))
         self.message_var = tk.StringVar(value="加载中…")
-        ttk.Label(root, textvariable=self.message_var, style="Muted.TLabel").pack(
-            anchor="w", padx=12, pady=(0, 8)
+        ttk.Label(status_row, textvariable=self.message_var, style="Muted.TLabel").pack(
+            side="left"
+        )
+        self.version_var = tk.StringVar(value="")
+        self._version = ""
+        ttk.Label(status_row, textvariable=self.version_var, style="Muted.TLabel").pack(
+            side="right"
         )
 
         self.refresh()
+        self._load_version()
         self._toggle_auto_refresh()
+        root.after(AUTO_UPGRADE_DELAY_MS, self._auto_upgrade)
 
     def run_async(self, work, on_done, on_error=None, notify: bool = True) -> None:
         def task() -> None:
@@ -306,6 +313,18 @@ class CswapGui:
     def _on_refresh_error(self, message: str) -> None:
         self._refreshing = False
         self.message_var.set(f"刷新失败：{message.splitlines()[0][:80]}")
+
+    def _load_version(self) -> None:
+        self.run_async(
+            lambda: run_cswap("--version"),
+            self._set_version,
+            on_error=lambda _msg: self._set_version(""),
+            notify=False,
+        )
+
+    def _set_version(self, output: str) -> None:
+        self._version = output.strip()
+        self.version_var.set(self._version)
 
     def _toggle_auto_refresh(self) -> None:
         if self.auto_refresh_var.get():
@@ -437,40 +456,26 @@ class CswapGui:
             lambda output: (self.message_var.set(output), self.refresh()),
         )
 
-    def upgrade(self) -> None:
-        if self._upgrade_running:
-            return
-        self._upgrade_running = True
-        self._upgrade_seconds = 0
-        self.upgrade_button.state(["disabled"])
-        self._tick_upgrade()
+    def _auto_upgrade(self) -> None:
+        """Check and upgrade cswap in the background, once per launch.
+
+        Runs unattended, so it never opens a dialog. Progress and failures
+        show in the version label rather than the status bar: the start is
+        staggered off the refresh tick, but a slow download can still finish
+        on one, and the label is never overwritten by a refresh.
+        A successful upgrade announces itself as the new version number.
+        """
+        self.version_var.set(f"{self._version or 'cswap'} · 升级中…")
         self.run_async(
             lambda: run_cswap("--upgrade"),
-            self._on_upgrade_done,
+            lambda _output: self._load_version(),
             self._on_upgrade_error,
+            notify=False,
         )
-
-    def _tick_upgrade(self) -> None:
-        if not self._upgrade_running:
-            return
-        self.message_var.set(
-            f"正在升级 claude-swap…（已用 {self._upgrade_seconds} 秒，正在联网下载，请稍候）"
-        )
-        self._upgrade_seconds += 1
-        self.root.after(1000, self._tick_upgrade)
-
-    def _finish_upgrade(self) -> None:
-        self._upgrade_running = False
-        self.upgrade_button.state(["!disabled"])
-
-    def _on_upgrade_done(self, output: str) -> None:
-        self._finish_upgrade()
-        self.message_var.set("升级完成")
-        messagebox.showinfo("升级结果", output or "已是最新版本，无需升级。")
 
     def _on_upgrade_error(self, message: str) -> None:
-        self._finish_upgrade()
-        self.message_var.set("升级失败")
+        self.version_var.set(f"{self._version or 'cswap'} · 升级失败")
+        self.message_var.set(f"cswap 自动升级失败：{message.splitlines()[0][:60]}")
 
 
 def main() -> None:
