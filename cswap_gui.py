@@ -23,7 +23,9 @@ BASE_WINDOWS = (("fiveHour", "5h"), ("sevenDay", "7d"))
 STALE_STATUSES = frozenset({"no_credentials", "token_expired", "relogin_required"})
 STATUS_NOTES = {
     "token_expired": "令牌已过期（Claude Code 使用中，其下次请求后自动恢复）",
-    "relogin_required": "需重新登录：先在 Claude CLI /login，再 cswap --add-account",
+    # cswap 会把 invalid_grant 的账号持久隔离,且只有 add-account 能解除
+    # (switch 不行),所以这里必须指向「添加当前登录账号」而非切换。
+    "relogin_required": "需重新登录：先在 Claude CLI /login，再点下方「添加当前登录账号」",
     "no_credentials": "凭据缺失",
     "keychain_unavailable": "钥匙串不可用",
     "unavailable": "用量获取失败",
@@ -495,7 +497,8 @@ class CswapGui:
                 f"账号 {slot}（{account['email']}）的存储凭据已失效，\n"
                 "切换过去后 Claude Code 会报 401 授权错误。\n\n"
                 "正确做法：先在 Claude CLI 用该账号 /login 登录，\n"
-                "再运行 cswap --add-account 刷新凭据。\n\n"
+                "再点「添加当前登录账号」刷新凭据。\n"
+                "注意：切换不会解除失效标记，只有重新添加才行。\n\n"
                 "仍要强行切换吗？",
                 icon="warning",
                 default="no",
