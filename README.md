@@ -1,32 +1,38 @@
 # Claude Desktop Profiles for Linux
 
-在 Linux 上并行运行多个 Claude Desktop 账号。每个 profile 拥有独立的登录状态、
-聊天记录、设置与 MCP 连接器，可同时开着互不干扰。
+Run multiple Claude Desktop accounts side by side on Linux. Each profile keeps its
+own login, chat history, settings, and MCP connectors — open them at the same time
+without interference.
 
-纯 stdlib Python：一个命令行 + 一个 curses 交互界面。零安装依赖、无 Electron 包装、无遥测。
+Pure stdlib Python: one CLI plus a curses interface. No dependencies to install,
+no Electron wrapper, no telemetry.
 
-## 工作原理
+> Inspired by [odahcam/claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles),
+> which solves the same problem beautifully on macOS. See [Credits](#credits).
 
-Claude Desktop 是 Electron 应用，因此支持 Chromium 的 `--user-data-dir`。
-每个 profile 就是一个独立的数据目录：
+## How it works
+
+Claude Desktop is an Electron app, so it honours Chromium's `--user-data-dir`.
+A profile is simply an isolated data directory:
 
 ```
-~/.config/Claude-Work/       # Cookies、Local Storage、config.json、
-~/.config/Claude-Personal/   # claude_desktop_config.json 各自独立
+~/.config/Claude-Work/       # Cookies, Local Storage, config.json and
+~/.config/Claude-Personal/   # claude_desktop_config.json are all separate
 ```
 
-Electron 的单实例锁按 `--user-data-dir` 划分，因此：
+Electron's single-instance lock is scoped per `--user-data-dir`, which gives us:
 
-- 同一 profile 重复启动 → 聚焦已有窗口，不会开出第二个实例
-- 不同 profile → 各自独立的进程，可同时运行
+- Launching the same profile twice → focuses the existing window, no second instance
+- Different profiles → independent processes that run concurrently
 
-`--class` 让每个 profile 拿到独立的 `WM_CLASS`，配合 `.desktop` 里的
-`StartupWMClass`，任务栏/程序坞会把各 profile 的窗口分开归组。
+`--class` gives each profile its own `WM_CLASS`, which together with
+`StartupWMClass` in the `.desktop` file makes taskbars and docks group each
+profile's windows separately.
 
-## 安装
+## Install
 
-只需要 Claude Desktop 和 Python 3.10+（发行版自带）。**无第三方依赖，
-不用装 python3-tk，不用 pip，不用 npm。**
+You need Claude Desktop and Python 3.10+ (shipped by every current distro).
+**No third-party dependencies — no `python3-tk`, no pip, no npm.**
 
 ```bash
 git clone https://github.com/BMProjects/claude-desktop-profiles-linux.git
@@ -34,151 +40,194 @@ cd claude-desktop-profiles-linux
 ./install.sh
 ```
 
-安装脚本把 `cdp` 软链到 `~/.local/bin`，并把「Claude Desktop 多账号」交互界面
-装进应用菜单。软链而非拷贝，更新仓库后立即生效。
+The script symlinks `cdp` into `~/.local/bin` and adds the interactive interface
+to your application menu. It symlinks rather than copies, so pulling updates takes
+effect immediately.
 
-## 使用
+## Usage
 
 ```bash
-cdp list                       # 名称 / 配色 / 运行状态 / 磁盘占用 / 启动器
-cdp add Work --color blue      # 新建空 profile，首次启动时在其中登录另一个账号
-cdp launch Work                # 启动（已运行则聚焦）
-cdp color Work purple          # 换配色与图标
-cdp remove Work                # 移除启动器，保留数据
-cdp remove Work --purge        # 连数据目录一并删除（会二次确认）
-cdp                            # 不带参数即打开交互界面
+cdp list                       # name / colour / running state / disk usage / launcher
+cdp add Work --color blue      # create an empty profile, then sign in on first launch
+cdp launch Work                # launch (focuses the window if already running)
+cdp color Work purple          # change colour and icon
+cdp remove Work                # remove the launcher, keep the data
+cdp remove Work --purge        # also delete the data directory (asks to confirm)
+cdp                            # no arguments opens the interactive interface
 ```
 
-配色：`orange` `red` `yellow` `green` `teal` `blue` `purple` `pink`
+Colours: `orange` `red` `yellow` `green` `teal` `blue` `purple` `pink`
 
-新建后可直接在应用菜单里搜索「Claude — Work」启动，无需终端。
+Once created, a profile can be started straight from the application menu by
+searching for "Claude — Work" — no terminal needed.
 
-### 「Default」——系统已装的那个
+### "Default" — the Claude Desktop you already have
 
-列表里第一项 `Default` 就是系统已安装的 Claude Desktop 本身
-（`~/.config/Claude`）。它**不由 cdp 创建，也不会被复制到别处**，只是被纳入
-列表统一管理：
+The first entry in the list, `Default`, is the system's existing Claude Desktop
+installation (`~/.config/Claude`). It is **not created by cdp and never copied
+anywhere** — it is simply adopted into the list:
 
-- 可以 `cdp launch Default` 启动，或照旧从应用菜单里的官方「Claude」打开
-- **不能改色或移除**——它归 Claude Desktop 安装本身管理，cdp 从不改动它
-- 启动它时刻意不带 `--user-data-dir`，进程特征与官方启动器一致
+- Launch it with `cdp launch Default`, or from the official "Claude" menu entry
+- **It cannot be recoloured or removed** — it belongs to the Claude Desktop
+  installation, and cdp never modifies it
+- It is deliberately launched *without* `--user-data-dir`, so its process
+  signature matches the official launcher
 
-**已登录的账号请继续用它。** `claude://` 登录回调固定由它接管（见下文），
-所以它是唯一能顺畅完成登录的配置；新账号才用 `cdp add` 建新 profile。
+**Keep using it for the account you are already signed in with.** The `claude://`
+login callback is always handled by this profile (see below), which makes it the
+one configuration where signing in works smoothly. Use `cdp add` for additional
+accounts.
 
-> 早期版本提供过 `cdp import`（把 Default 复制成新 profile），现已移除：
-> 复制会让两个目录持有同一账号的凭据副本，容易触发服务端重新验证，且复制出来
-> 的那份因回调归属问题也无法独立完成登录。直接把 Default 当默认账号用即可。
+> Earlier versions had a `cdp import` command that copied `Default` into a new
+> profile. It has been removed: copying leaves two directories holding credentials
+> for the same account, which tends to trigger server-side re-verification, and the
+> copy could not complete a login of its own because of the callback ownership
+> described below. Just use `Default` as your primary account.
 
-## 交互界面
+## Interactive interface
 
-直接运行 `cdp`（不带参数），或在应用菜单打开「Claude Desktop 多账号」。
+Run `cdp` with no arguments, or open "Claude Desktop Profiles" from the
+application menu.
 
 ```
- Claude Desktop 多账号                         2 个 · 1 个运行中
-────────────────────────────────────────────────────────────────
+ Claude Desktop 多账号                          2 个 · 1 个运行中
+──────────────────────────────────────────────────────────────────
  ▸ ● Default      系统自带   运行中    594M
    ● work         blue                 12M
-────────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────
  已启动「Default」
  ↑↓ 选择  Enter 启动  c 配色  d 删除  a 新建  r 刷新  ? 帮助  q 退出
 ```
 
-按键提示常驻底部，删除等破坏性操作一律二次确认且默认为「否」。
-运行状态每 3 秒自动刷新（磁盘占用较慢，只在按 `r` 时重算）。
+> **Note:** the CLI and interactive interface currently speak Chinese; only this
+> README is in English. Translating the UI is a matter of the user-facing strings
+> in `cdp/__main__.py`, `cdp/tui.py`, and `cdp/manager.py` — open an issue if you
+> would find that useful.
 
-界面用 stdlib `curses` 写成——它随 Python 一起安装，不像 `tkinter` 那样
-需要另装系统包，因此在任何发行版上开箱即用。所有动作都委托给同一套操作层，
-与命令行行为完全一致。
+Key hints stay pinned to the bottom, and destructive actions always ask for
+confirmation with "no" as the default. Running state refreshes every 3 seconds;
+disk usage is slower to compute, so it is only recalculated when you press `r`.
 
-## 在新 profile 里登录时会跳回 Default（重要）
+The interface is built on stdlib `curses`, which ships with Python itself — unlike
+`tkinter`, it needs no extra system package, so it works out of the box on any
+distribution. Every action is delegated to the same operations layer the CLI uses,
+so the two never diverge in behaviour.
 
-**现象**：在新建的 profile 里点登录，验证走完却跳回 `Default` 的账号，
-该 profile 依旧是空的。
+## Signing in from a new profile falls back to Default (important)
 
-**原因**：登录回调走 `claude://` 协议，而系统里该协议的处理器是官方的
-`com.anthropic.Claude.desktop`，其 `Exec=claude-desktop %U` **不带
-`--user-data-dir`**——回调因此必然由 `Default` 接管，发起登录的 profile 收不到。
-这是单一全局协议与多 profile 的固有冲突：系统无从知道是哪个 profile 发起的。
+**Symptom**: you click sign-in inside a newly created profile, complete the
+verification, and end up back on `Default`'s account — while the new profile is
+still empty.
 
-这也正是**已登录的账号应当继续用 `Default`** 的原因：它是回调的天然归属方。
+**Cause**: the login callback travels over the `claude://` URL scheme, and the
+system handler for that scheme is the official `com.anthropic.Claude.desktop`,
+whose `Exec=claude-desktop %U` carries **no `--user-data-dir`**. The callback is
+therefore always claimed by `Default`, and the profile that started the login never
+receives it. This is an inherent conflict between a single global URL scheme and
+multiple profiles: the system has no way to know which profile initiated the flow.
 
-**规避办法**：登录期间把该协议临时指向目标 profile 的启动器，完成后还原。
+This is also exactly why **the account you are already signed in with should stay
+on `Default`** — it is the natural owner of the callback.
+
+**Workaround**: point the scheme at the target profile for the duration of the
+login, then restore it.
 
 ```bash
-# 1. 登录前：把 claude:// 指向目标 profile（这里是 apple）
+# 1. Before signing in: point claude:// at the target profile (here: apple)
 xdg-mime default claude-profile-apple.desktop x-scheme-handler/claude
 
-# 2. 启动该 profile 并完成登录
+# 2. Launch that profile and complete the login
 cdp launch apple
 
-# 3. 登录完成后还原
+# 3. Restore afterwards
 xdg-mime default com.anthropic.Claude.desktop x-scheme-handler/claude
 ```
 
-profile 启动器的 `Exec` 里已带 `%U`，能正常接收回调 URL。查看当前指向：
+Profile launchers already carry `%U` in their `Exec` line, so they can receive the
+callback URL. To check what the scheme currently points at:
 
 ```bash
 xdg-mime query default x-scheme-handler/claude
 ```
 
-还原后，日常点击 `claude://` 链接仍由默认配置打开。
+Once restored, everyday `claude://` links open in `Default` again.
 
-## KDE 全局快捷键会堆积
+## KDE global shortcuts pile up
 
-启动 profile 后，系统设置里可能弹出快捷键冲突提示，且「Claude」名下积攒出
-一堆无用条目。这是 Claude Desktop 自身的行为，不是 profile 机制的副作用：
+After launching profiles, System Settings may show a shortcut conflict prompt, and
+a pile of useless entries accumulates under "Claude". This is Claude Desktop's own
+behaviour, not a side effect of the profile mechanism:
 
-- `Ctrl+Alt+Space`（快速输入）是**应用内硬编码的默认值**，不写入 profile 目录，
-  因此无法通过预置配置提前关闭（实测预置 `quickEntryShortcut: "off"` 无效）。
-- 每个实例启动时都会重新向 KDE 注册一次。该键已被首个实例占用，后来者绑定
-  失败，只留下一条「生效键为空」的惰性条目，并触发冲突提示。
-- profile 删除后，这些条目不会自动消失。
+- `Ctrl+Alt+Space` (quick entry) is a **hard-coded default inside the app**. It is
+  not written into the profile directory, so it cannot be disabled up front —
+  seeding `quickEntryShortcut: "off"` was tested and has no effect.
+- Every instance re-registers it on startup. The key is already held by the first
+  instance, so later ones fail to bind and leave behind an inert entry with an
+  empty binding, which is what triggers the conflict prompt.
+- Deleting a profile does not remove these entries.
 
-清理：
+To clean up:
 
 ```bash
-cdp prune-shortcuts     # 删除所有未绑定的失效条目，保留真正生效的那条
+cdp prune-shortcuts     # drop every unbound stale entry, keep the live one
 ```
 
-只删除生效键为空的条目，不影响正在使用的快捷键；可反复执行。注销重登后
-系统设置界面才会完全同步。
+It only deletes entries whose active binding is empty, so the shortcut actually in
+use is untouched. Safe to run repeatedly. System Settings fully reflects the change
+after you log out and back in.
 
-## 项目结构
+## Project layout
 
 ```
 cdp/
-├── core.py            跨平台核心：数据模型、配色、启动命令拼装
-├── platform_linux.py  平台集成：.desktop、hicolor 图标、进程检测、KDE 快捷键
-├── manager.py         操作层：增删改查与全部守卫，两个前端共用
-├── __main__.py        命令行：参数解析与文本输出
-└── tui.py             curses 交互界面
+├── core.py            Cross-platform: data model, colours, launch argv
+├── platform_linux.py  Platform integration: .desktop, hicolor icons,
+│                      process detection, KDE shortcuts
+├── manager.py         Operations layer: CRUD plus every guard, shared by both frontends
+├── __main__.py        CLI: argument parsing and text output
+└── tui.py             curses interface
 ```
 
-平台相关的代码全部收在 `platform_linux.py` 一处，移植到 macOS / Windows 时
-只需替换该模块——`core`、`manager` 与两个前端都不必改动。业务规则只存在于
-`manager.py`，命令行与交互界面因此不会出现行为分叉。
+Every platform-specific detail lives in `platform_linux.py` alone, so a port to
+macOS or Windows only has to replace that module — `core`, `manager`, and both
+frontends stay as they are. Business rules exist solely in `manager.py`, which is
+why the CLI and the interactive interface cannot drift apart.
 
-## 已知限制
+## Known limitations
 
-- **Wayland 下无法由外部聚焦窗口**：聚焦依赖 Electron 自身的单实例机制，
-  正常可用；但若某 profile 的窗口被最小化到托盘，行为取决于 Claude Desktop。
-- **profile 首次创建约占 12 MB**，随聊天记录与缓存增长。
-- **不共享登录态是特性而非缺陷**：每个 profile 都需各自登录一次。
+- **Windows cannot be focused externally under Wayland.** Focusing relies on
+  Electron's own single-instance mechanism, which works fine; if a profile's window
+  is minimised to the tray, the behaviour is up to Claude Desktop.
+- **A fresh profile takes about 12 MB**, growing with chat history and cache.
+- **Not sharing login state is the point, not a bug** — each profile signs in once.
 
-## 与 cswap 的关系
+## Relationship to cswap
 
-本项目管理的是 **Claude Desktop 桌面应用**的多账号。若要在 **Claude Code CLI**
-中切换账号，请用 [claude-swap](https://github.com/realiti4/claude-swap)（`cswap`），
-两者互不冲突、可同时使用。
+This project manages multiple accounts for the **Claude Desktop app**. To switch
+accounts in the **Claude Code CLI**, use
+[claude-swap](https://github.com/realiti4/claude-swap) (`cswap`) instead. The two
+are independent and can be used together.
 
-## 致谢
+## Credits
 
-设计借鉴 [odahcam/claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles)
-（macOS，SwiftUI + Shell）。本项目是面向 Linux 的重新实现：隔离机制同样基于
-`--user-data-dir`，但 Linux 无需 APFS 克隆、无需改 app 签名与图标，
-直接以不同参数启动同一个二进制即可，因而实现更简单。
+This project owes its design to
+**[odahcam/claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles)**
+— a native SwiftUI profile manager for macOS. Thank you for working out the
+approach and publishing it: the core insight that Claude Desktop's profiles can be
+isolated purely through Chromium's `--user-data-dir`, along with the per-profile
+colour-coded launcher model, both come from that project.
 
-## 许可
+This is an independent Linux implementation of the same idea. The isolation
+mechanism is identical; the platform integration is not. Where macOS needs APFS
+copy-on-write clones of the app, `NSWorkspace.setIcon` for tinted icons,
+LaunchServices bundle identifiers, and AppleScript applets, Linux needs none of
+that — the same binary is simply launched with different arguments, and desktop
+integration is a matter of writing `.desktop` files and SVG icons. That makes the
+Linux side considerably simpler, which is the only reason this implementation is
+as small as it is.
+
+If you are on macOS, use the original — it is the better fit there.
+
+## License
 
 MIT
