@@ -18,15 +18,17 @@ ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
 PROFILE_PREFIX="Claude-"
 COLOR_FILE=".cdp-color"
 DEFAULT_COLOR="orange"
-# Claude Desktop 自身的默认数据目录,cdp import 的来源。
-DEFAULT_PROFILE="$CONFIG_HOME/Claude"
-# 承载登录态的文件:Cookies 存 sessionKey,config.json 存 oauth:tokenCache,
-# Local State 决定 cookie 的解密方式。
+
+# Claude Desktop 自带的数据目录。它不由 cdp 创建,也不复制到别处,而是作为
+# 一个只读的内置条目纳入管理——列表里能看到、能启动,但不能改色或移除。
 #
-# 刻意不含 ant-did(设备标识):复制它会让新 profile 与来源伪装成同一台设备,
-# 同一标识被两个会话并发使用会触发服务端的重新验证。留空则首次启动时自行
-# 生成新的,代价是可能需要过一次设备验证——这才是它本该有的样子。
-AUTH_ITEMS=(Cookies Cookies-journal "Local Storage" "Local State" config.json)
+# 之所以不再提供「把它复制成新 profile」的导入功能:复制会让两个目录持有同
+# 一账号的凭据副本,且 claude:// 登录回调固定由本目录接管(系统协议处理器不
+# 带 --user-data-dir),复制出来的那份既容易触发服务端重新验证,也无法独立完
+# 成登录。直接把它当默认账号用,这些问题就都不存在。
+DEFAULT_PROFILE="$CONFIG_HOME/Claude"
+DEFAULT_NAME="Default"
+DEFAULT_DESKTOP="com.anthropic.Claude.desktop"
 
 # 与参考项目 (odahcam/claude-desktop-profiles) 一致的调色板。
 color_hex() {
@@ -54,19 +56,46 @@ slug_of() {
     printf '%s' "$s"
 }
 
-profile_dir()  { printf '%s/%s%s' "$CONFIG_HOME" "$PROFILE_PREFIX" "$1"; }
+# 内置的系统默认账号(大小写不敏感,方便 cdp launch default)。
+is_default_name() {
+    [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" \
+      = "$(printf '%s' "$DEFAULT_NAME" | tr '[:upper:]' '[:lower:]')" ]
+}
+
+profile_dir() {
+    if is_default_name "$1"; then printf '%s' "$DEFAULT_PROFILE"
+    else printf '%s/%s%s' "$CONFIG_HOME" "$PROFILE_PREFIX" "$1"; fi
+}
 desktop_file() { printf '%s/claude-profile-%s.desktop' "$APP_DIR" "$1"; }
 icon_file()    { printf '%s/claude-profile-%s.svg' "$ICON_DIR" "$1"; }
 wm_class()     { printf 'claude-profile-%s' "$1"; }
+
+# 应用菜单里是否有对应启动器。系统自带的那个用官方 .desktop(装在系统目录),
+# 不是 cdp 生成的那套。
+has_launcher() {
+    if is_default_name "$1"; then
+        [ -f "/usr/share/applications/$DEFAULT_DESKTOP" ] \
+            || [ -f "$APP_DIR/$DEFAULT_DESKTOP" ]
+    else
+        [ -f "$(desktop_file "$(slug_of "$1")")" ]
+    fi
+}
+
+reject_default() {
+    is_default_name "$1" \
+        && die "「$DEFAULT_NAME」是系统自带的 Claude Desktop 配置,由安装本身管理,不能$2。"
+    return 0
+}
 
 require_claude() {
     command -v "$CLAUDE_BIN" >/dev/null \
         || die "找不到 $CLAUDE_BIN。请先安装 Claude Desktop,或设置 CDP_CLAUDE_BIN 指向可执行文件。"
 }
 
-# 已存在的 profile 名(即 $CONFIG_HOME 下的 Claude-* 目录),每行一个。
+# 所有 profile 名,每行一个:系统自带的排在最前,其后是 cdp 建的 Claude-* 目录。
 list_profiles() {
     local d name
+    [ -d "$DEFAULT_PROFILE" ] && printf '%s\n' "$DEFAULT_NAME"
     for d in "$CONFIG_HOME/$PROFILE_PREFIX"*; do
         [ -d "$d" ] || continue
         name="$(basename "$d")"
@@ -75,6 +104,8 @@ list_profiles() {
 }
 
 profile_color() {
+    # 系统自带的那个用官方图标,不参与配色。
+    is_default_name "$1" && { printf 'system'; return 0; }
     local f; f="$(profile_dir "$1")/$COLOR_FILE"
     if [ -r "$f" ]; then head -n1 "$f"; else printf '%s' "$DEFAULT_COLOR"; fi
 }
@@ -84,6 +115,7 @@ profile_color() {
 app_procs() { pgrep -ax "$(basename "$CLAUDE_BIN")" 2>/dev/null; }
 
 is_running() {
+    is_default_name "$1" && { default_profile_running; return $?; }
     app_procs | grep -qF -- "--user-data-dir=$(profile_dir "$1")"
 }
 
@@ -174,63 +206,14 @@ cmd_add() {
     parse_name_color "用法: cdp add <名称> [--color <颜色>]" "$@"
     local name="$PARSED_NAME" color="$PARSED_COLOR"
     require_claude
+    reject_default "$name" "用作新 profile 的名称"
     [ -d "$(profile_dir "$name")" ] && die "profile「$name」已存在。"
     create_profile "$name" "$color"
     echo "已创建 profile「$name」($color)"
     echo "  数据目录: $(profile_dir "$name")"
     echo "  启动器  : $(desktop_file "$(slug_of "$name")")"
     echo "  启动    : cdp launch $name（或在应用菜单搜索 Claude — $name）"
-    echo "  提示    : 该 profile 尚未登录;若想复用当前已登录的账号,改用 cdp import"
-}
-
-# 目标 profile 是否为空(只允许有 .cdp-color,即刚由 cdp add 创建过)。
-profile_is_empty() {
-    local dir="$1" entry
-    for entry in "$dir"/* "$dir"/.[!.]*; do
-        [ -e "$entry" ] || continue
-        [ "$(basename "$entry")" = "$COLOR_FILE" ] && continue
-        return 1
-    done
-    return 0
-}
-
-cmd_import() {
-    parse_name_color "用法: cdp import <名称> [--color <颜色>]" "$@"
-    local name="$PARSED_NAME" color="$PARSED_COLOR"
-    require_claude
-
-    [ -d "$DEFAULT_PROFILE" ] \
-        || die "找不到默认配置 $DEFAULT_PROFILE,请先正常启动一次 Claude Desktop 并登录。"
-    [ -f "$DEFAULT_PROFILE/Cookies" ] \
-        || die "默认配置中没有 Cookies,看起来尚未登录。请先登录 Claude Desktop。"
-
-    # 运行中复制 SQLite 会拿到写入中途的快照,导入的登录态可能损坏。
-    default_profile_running \
-        && die "Claude Desktop 正在运行。请先完全退出,再执行导入(否则复制到的登录态可能是残缺快照)。"
-
-    local dir; dir="$(profile_dir "$name")"
-    if [ -d "$dir" ] && ! profile_is_empty "$dir"; then
-        die "profile「$name」已有数据,拒绝覆盖。请换个名称,或先 cdp remove「$name」--purge。"
-    fi
-
-    create_profile "$name" "$color"
-
-    local item copied=0
-    for item in "${AUTH_ITEMS[@]}"; do
-        if [ -e "$DEFAULT_PROFILE/$item" ]; then
-            cp -a "$DEFAULT_PROFILE/$item" "$dir/"
-            copied=$((copied + 1))
-        fi
-    done
-    [ "$copied" -gt 0 ] || die "没有复制到任何登录文件,导入失败。"
-
-    echo "已从当前登录的 Claude Desktop 导入到 profile「$name」($color)"
-    echo "  数据目录: $dir"
-    echo "  已复制  : $copied 项登录文件（会话 Cookies、OAuth 令牌、设备标识）"
-    echo "  启动    : cdp launch $name"
-    echo
-    echo "注意：该 profile 与默认配置现在是同一个账号，且各自持有一份凭据副本。"
-    echo "      若要用另一个账号，请在新 profile 里退出登录后重新登录。"
+    echo "  提示    : 首次启动时在该 profile 内登录另一个账号即可"
 }
 
 cmd_list() {
@@ -249,7 +232,7 @@ cmd_list() {
                 "$(profile_color "$n")" \
                 "$(is_running "$n" && echo 1 || echo 0)" \
                 "$(du -sh "$(profile_dir "$n")" 2>/dev/null | cut -f1)" \
-                "$([ -f "$(desktop_file "$(slug_of "$n")")" ] && echo 1 || echo 0)"
+                "$(has_launcher "$n" && echo 1 || echo 0)"
         done <<< "$names"
         return 0
     fi
@@ -266,7 +249,7 @@ cmd_list() {
         color="$(profile_color "$n")"
         if is_running "$n"; then state="running"; else state="-"; fi
         size="$(du -sh "$(profile_dir "$n")" 2>/dev/null | cut -f1)"
-        if [ -f "$(desktop_file "$(slug_of "$n")")" ]; then launcher="ok"; else launcher="MISSING"; fi
+        if has_launcher "$n"; then launcher="ok"; else launcher="MISSING"; fi
         printf '%-18s %-8s %-9s %-7s %s\n' "$n" "$color" "$state" "${size:-?}" "$launcher"
     done <<< "$names"
 }
@@ -276,14 +259,20 @@ cmd_launch() {
     [ -n "$name" ] || die "用法: cdp launch <名称>"
     assert_exists "$name"
     require_claude
-    local slug; slug="$(slug_of "$name")"
     if is_running "$name"; then
-        echo "profile「$name」已在运行,Electron 会聚焦其已有窗口。"
+        echo "「$name」已在运行,Electron 会聚焦其已有窗口。"
     fi
-    setsid "$CLAUDE_BIN" \
-        --user-data-dir="$(profile_dir "$name")" \
-        --class="$(wm_class "$slug")" \
-        >/dev/null 2>&1 < /dev/null &
+    # 系统自带的那个必须以「不带任何参数」的方式启动:只有这样它的进程特征才
+    # 与官方启动器一致,claude:// 登录回调(处理器同样不带 --user-data-dir)
+    # 才会落到它身上。
+    if is_default_name "$name"; then
+        setsid "$CLAUDE_BIN" >/dev/null 2>&1 < /dev/null &
+    else
+        setsid "$CLAUDE_BIN" \
+            --user-data-dir="$(profile_dir "$name")" \
+            --class="$(wm_class "$(slug_of "$name")")" \
+            >/dev/null 2>&1 < /dev/null &
+    fi
     echo "已启动「$name」"
 }
 
@@ -291,6 +280,7 @@ cmd_color() {
     local name="${1:-}" color="${2:-}"
     [ -n "$name" ] && [ -n "$color" ] || die "用法: cdp color <名称> <颜色>   可选: $COLOR_NAMES"
     assert_exists "$name"
+    reject_default "$name" "改配色（它用的是官方图标）"
     local hex; hex="$(color_hex "$color")" || die "未知颜色「$color」。可选: $COLOR_NAMES"
     local slug; slug="$(slug_of "$name")"
     printf '%s\n' "$color" > "$(profile_dir "$name")/$COLOR_FILE"
@@ -311,6 +301,8 @@ cmd_remove() {
     done
     [ -n "$name" ] || die "用法: cdp remove <名称> [--purge]"
     assert_exists "$name"
+    # 守住这一条,cdp 就永远不会删到 Claude Desktop 自己的数据目录。
+    reject_default "$name" "移除"
     is_running "$name" && die "profile「$name」正在运行,请先退出再移除。"
 
     local slug; slug="$(slug_of "$name")"
@@ -382,7 +374,6 @@ cdp — Claude Desktop Profiles for Linux
 
 用法:
   cdp add <名称> [--color <颜色>]   创建空 profile 并生成应用菜单启动器
-  cdp import <名称> [--color <色>]  同上,但复制当前已登录的账号,开箱即登录
   cdp list                          列出所有 profile(颜色/运行状态/占用)
   cdp launch <名称>                 启动 profile(已运行则聚焦)
   cdp color <名称> <颜色>           更换配色与图标
@@ -392,8 +383,12 @@ cdp — Claude Desktop Profiles for Linux
 
 颜色: $COLOR_NAMES
 
-每个 profile 的数据独立存放在 $CONFIG_HOME/${PROFILE_PREFIX}<名称>/,
-互不共享登录态、设置与 MCP 连接器。
+「$DEFAULT_NAME」是系统已安装的 Claude Desktop 本身($DEFAULT_PROFILE),
+自动纳入列表,可启动但不能改色或移除——它由安装本身管理,cdp 从不改动它。
+claude:// 登录回调固定由它接管,所以已登录的账号请继续用它。
+
+cdp 新建的 profile 数据独立存放在 $CONFIG_HOME/${PROFILE_PREFIX}<名称>/,
+互不共享登录态、设置与 MCP 连接器;新账号在其首次启动时自行登录。
 EOF
 }
 
@@ -401,7 +396,6 @@ main() {
     local cmd="${1:-}"; [ $# -gt 0 ] && shift || true
     case "$cmd" in
         add)    cmd_add "$@" ;;
-        import) cmd_import "$@" ;;
         list|ls) cmd_list "$@" ;;
         launch|run) cmd_launch "$@" ;;
         color)  cmd_color "$@" ;;

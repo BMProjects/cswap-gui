@@ -38,6 +38,9 @@ PALETTE = {
 }
 RUNNING_FG = "#4C9A5A"
 REFRESH_INTERVAL_MS = 5_000
+# cdp 用这个色名标记「系统自带的 Claude Desktop」这一内置条目。
+SYSTEM_COLOR = "system"
+SYSTEM_DOT = "#8A9099"
 
 
 def find_cdp() -> str:
@@ -78,6 +81,9 @@ def parse_profiles(porcelain: str) -> list[dict]:
                 "running": running == "1",
                 "size": size or "?",
                 "launcher": launcher == "1",
+                # 色名 "system" 是 cdp 对「系统自带的那个」的标记:它由
+                # Claude Desktop 安装本身管理,只能启动,不能改色或移除。
+                "builtin": color == SYSTEM_COLOR,
             }
         )
     return profiles
@@ -158,9 +164,6 @@ class ProfilesGui:
         ttk.Button(
             row, text="新建 Profile", style="Accent.TButton", command=self.add_profile
         ).pack(side="left")
-        ttk.Button(row, text="导入当前登录账号", command=self.import_current).pack(
-            side="left", padx=6
-        )
         ttk.Button(row, text="刷新", command=self.refresh).pack(side="left", padx=6)
 
         self.message_var = tk.StringVar(value="加载中…")
@@ -215,11 +218,9 @@ class ProfilesGui:
                 justify="left",
                 style="Muted.TLabel",
                 text=(
-                    "还没有任何 profile。\n\n"
-                    "「导入当前登录账号」——复制现在已登录的账号，无需重新登录\n"
-                    "「新建 Profile」——建一个空白的，首次启动时自己登录\n\n"
-                    "每个 profile 拥有独立的登录状态、设置与 MCP 连接器，\n"
-                    "可同时运行、互不干扰。"
+                    "没有检测到 Claude Desktop 配置。\n\n"
+                    "请先正常启动一次 Claude Desktop，它会作为「系统自带」\n"
+                    "条目出现在这里；再用「新建 Profile」添加其他账号。"
                 ),
             ).pack(anchor="w", pady=12)
 
@@ -236,13 +237,20 @@ class ProfilesGui:
 
         header = ttk.Frame(card)
         header.pack(fill="x")
+        builtin = profile["builtin"]
         ttk.Label(
             header,
             text="●",
             font=self.dot_font,
-            foreground=COLORS.get(profile["color"], COLORS["orange"]),
+            foreground=SYSTEM_DOT
+            if builtin
+            else COLORS.get(profile["color"], COLORS["orange"]),
         ).pack(side="left", padx=(0, 8))
         ttk.Label(header, text=name, font=self.title_font).pack(side="left")
+        if builtin:
+            ttk.Label(header, text="系统自带", style="Muted.TLabel").pack(
+                side="left", padx=8
+            )
         if profile["running"]:
             ttk.Label(header, text="运行中", style="Running.TLabel").pack(
                 side="left", padx=8
@@ -259,9 +267,15 @@ class ProfilesGui:
         detail = ttk.Frame(card)
         detail.pack(fill="x", pady=(6, 0))
         note = f"占用 {profile['size']}"
-        if not profile["launcher"]:
+        if builtin:
+            note += " · 由 Claude Desktop 安装管理，登录回调归它接管"
+        elif not profile["launcher"]:
             note += " · ⚠ 应用菜单启动器缺失"
         ttk.Label(detail, text=note, style="Muted.TLabel").pack(side="left")
+
+        # 系统自带的那个不提供改色/移除:它不归 cdp 管,也不该被 cdp 删掉。
+        if builtin:
+            return
 
         ttk.Button(detail, text="移除", command=lambda: self.remove(name)).pack(
             side="right"
@@ -291,29 +305,6 @@ class ProfilesGui:
         self.run_async(
             lambda: run_cdp("add", name),
             lambda _out: self._done(f"已创建「{name}」"),
-        )
-
-    def import_current(self) -> None:
-        """把当前已登录的 Claude Desktop 复制成一个新 profile，开箱即登录。
-
-        cdp import 自身会拒绝在 Claude Desktop 运行时执行（复制运行中的
-        SQLite 会得到残缺快照），这里只负责把该错误原样呈现给用户。
-        """
-        name = simpledialog.askstring(
-            "导入当前登录账号",
-            "新 profile 名称：\n\n"
-            "将复制当前 Claude Desktop 的登录状态，\n"
-            "创建后无需重新登录。请先完全退出 Claude Desktop。",
-            parent=self.root,
-        )
-        if not name or not name.strip():
-            return
-        name = name.strip()
-        self._busy = True
-        self.message_var.set(f"正在导入到「{name}」…")
-        self.run_async(
-            lambda: run_cdp("import", name),
-            lambda _out: self._done(f"已导入「{name}」，可直接启动"),
         )
 
     def launch(self, name: str) -> None:

@@ -40,9 +40,8 @@ cd claude-desktop-profiles-linux
 ## 使用
 
 ```bash
-cdp import Personal            # 复制当前已登录的账号，开箱即登录
-cdp add Work --color blue      # 创建空 profile，首次启动时自行登录
 cdp list                       # 名称 / 配色 / 运行状态 / 磁盘占用 / 启动器
+cdp add Work --color blue      # 新建空 profile，首次启动时在其中登录另一个账号
 cdp launch Work                # 启动（已运行则聚焦）
 cdp color Work purple          # 换配色与图标
 cdp remove Work                # 移除启动器，保留数据
@@ -52,33 +51,24 @@ cdp gui                        # 打开图形管理界面
 
 配色：`orange` `red` `yellow` `green` `teal` `blue` `purple` `pink`
 
-创建后可直接在应用菜单里搜索「Claude — Work」启动，无需终端。
+新建后可直接在应用菜单里搜索「Claude — Work」启动，无需终端。
 
-### 导入当前已登录的账号
+### 「Default」——系统已装的那个
 
-`cdp import <名称>` 把 Claude Desktop 默认配置（`~/.config/Claude`）里的登录态
-复制到新 profile，省去重新登录。典型用法是先把现有环境收编成一个具名 profile，
-再新建其他账号：
+列表里第一项 `Default` 就是系统已安装的 Claude Desktop 本身
+（`~/.config/Claude`）。它**不由 cdp 创建，也不会被复制到别处**，只是被纳入
+列表统一管理：
 
-```bash
-cdp import Personal --color green   # 现有账号 → Personal
-cdp add Work --color blue           # 另一个账号 → Work，启动后登录
-```
+- 可以 `cdp launch Default` 启动，或照旧从应用菜单里的官方「Claude」打开
+- **不能改色或移除**——它归 Claude Desktop 安装本身管理，cdp 从不改动它
+- 启动它时刻意不带 `--user-data-dir`，进程特征与官方启动器一致
 
-复制的是承载登录态的五项：`Cookies`（会话）、`config.json`（OAuth 令牌）、
-`Local Storage`、`Local State` 及 `Cookies-journal`。
+**已登录的账号请继续用它。** `claude://` 登录回调固定由它接管（见下文），
+所以它是唯一能顺畅完成登录的配置；新账号才用 `cdp add` 建新 profile。
 
-**刻意不复制 `ant-did`（设备标识）**：复制它会让新 profile 与来源伪装成同一台
-设备，同一标识被两个会话并发使用会触发服务端的重新验证。留空则首次启动时自行
-生成新的，代价是可能需要过一次设备验证——这才是它本该有的样子。
-
-注意事项：
-
-- **导入前请完全退出 Claude Desktop**。运行中复制 SQLite 会得到写入中途的快照，
-  导入的登录态可能损坏；`cdp import` 检测到其运行会直接拒绝。
-- **目标 profile 必须是空的**，已有数据时拒绝覆盖。
-- 导入后该 profile 与默认配置是**同一个账号**，且各自持有一份凭据副本。
-  想换账号就在新 profile 里退出登录再重新登录。
+> 早期版本提供过 `cdp import`（把 Default 复制成新 profile），现已移除：
+> 复制会让两个目录持有同一账号的凭据副本，容易触发服务端重新验证，且复制出来
+> 的那份因回调归属问题也无法独立完成登录。直接把 Default 当默认账号用即可。
 
 ## 图形界面
 
@@ -88,14 +78,17 @@ cdp add Work --color blue           # 另一个账号 → Work，启动后登录
 
 所有操作都委托给 `cdp` CLI，界面本身不含业务逻辑。
 
-## 在 profile 里登录时会跳回默认账号（重要）
+## 在新 profile 里登录时会跳回 Default（重要）
 
-**现象**：在某个 profile 里点登录，验证走完却跳回默认账号，该 profile 依旧是空的。
+**现象**：在新建的 profile 里点登录，验证走完却跳回 `Default` 的账号，
+该 profile 依旧是空的。
 
 **原因**：登录回调走 `claude://` 协议，而系统里该协议的处理器是官方的
 `com.anthropic.Claude.desktop`，其 `Exec=claude-desktop %U` **不带
-`--user-data-dir`**——回调因此必然由默认配置接管，发起登录的 profile 收不到。
+`--user-data-dir`**——回调因此必然由 `Default` 接管，发起登录的 profile 收不到。
 这是单一全局协议与多 profile 的固有冲突：系统无从知道是哪个 profile 发起的。
+
+这也正是**已登录的账号应当继续用 `Default`** 的原因：它是回调的天然归属方。
 
 **规避办法**：登录期间把该协议临时指向目标 profile 的启动器，完成后还原。
 
