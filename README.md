@@ -3,7 +3,7 @@
 在 Linux 上并行运行多个 Claude Desktop 账号。每个 profile 拥有独立的登录状态、
 聊天记录、设置与 MCP 连接器，可同时开着互不干扰。
 
-一个 shell CLI + 一个 tkinter 管理界面，无第三方依赖、无 Electron 包装、无遥测。
+纯 stdlib Python：一个命令行 + 一个 curses 交互界面。零安装依赖、无 Electron 包装、无遥测。
 
 ## 工作原理
 
@@ -25,16 +25,16 @@ Electron 的单实例锁按 `--user-data-dir` 划分，因此：
 
 ## 安装
 
-需要 Claude Desktop、`python3-tk`（仅图形界面需要）：
+只需要 Claude Desktop 和 Python 3.10+（发行版自带）。**无第三方依赖，
+不用装 python3-tk，不用 pip，不用 npm。**
 
 ```bash
-sudo apt install python3-tk     # Debian/Ubuntu
 git clone https://github.com/BMProjects/claude-desktop-profiles-linux.git
 cd claude-desktop-profiles-linux
 ./install.sh
 ```
 
-安装脚本把 `cdp` 软链到 `~/.local/bin`，并把「Claude Desktop 多账号」管理界面
+安装脚本把 `cdp` 软链到 `~/.local/bin`，并把「Claude Desktop 多账号」交互界面
 装进应用菜单。软链而非拷贝，更新仓库后立即生效。
 
 ## 使用
@@ -46,7 +46,7 @@ cdp launch Work                # 启动（已运行则聚焦）
 cdp color Work purple          # 换配色与图标
 cdp remove Work                # 移除启动器，保留数据
 cdp remove Work --purge        # 连数据目录一并删除（会二次确认）
-cdp gui                        # 打开图形管理界面
+cdp                            # 不带参数即打开交互界面
 ```
 
 配色：`orange` `red` `yellow` `green` `teal` `blue` `purple` `pink`
@@ -70,13 +70,26 @@ cdp gui                        # 打开图形管理界面
 > 复制会让两个目录持有同一账号的凭据副本，容易触发服务端重新验证，且复制出来
 > 的那份因回调归属问题也无法独立完成登录。直接把 Default 当默认账号用即可。
 
-## 图形界面
+## 交互界面
 
-`cdp gui`，或在应用菜单打开「Claude Desktop 多账号」。每个 profile 一张卡片，
-显示配色、运行状态与占用，可一键启动、换色、移除，每 5 秒自动刷新运行状态
-（Claude Desktop 在界面外被启停也能反映出来）。
+直接运行 `cdp`（不带参数），或在应用菜单打开「Claude Desktop 多账号」。
 
-所有操作都委托给 `cdp` CLI，界面本身不含业务逻辑。
+```
+ Claude Desktop 多账号                         2 个 · 1 个运行中
+────────────────────────────────────────────────────────────────
+ ▸ ● Default      系统自带   运行中    594M
+   ● work         blue                 12M
+────────────────────────────────────────────────────────────────
+ 已启动「Default」
+ ↑↓ 选择  Enter 启动  c 配色  d 删除  a 新建  r 刷新  ? 帮助  q 退出
+```
+
+按键提示常驻底部，删除等破坏性操作一律二次确认且默认为「否」。
+运行状态每 3 秒自动刷新（磁盘占用较慢，只在按 `r` 时重算）。
+
+界面用 stdlib `curses` 写成——它随 Python 一起安装，不像 `tkinter` 那样
+需要另装系统包，因此在任何发行版上开箱即用。所有动作都委托给同一套操作层，
+与命令行行为完全一致。
 
 ## 在新 profile 里登录时会跳回 Default（重要）
 
@@ -130,6 +143,21 @@ cdp prune-shortcuts     # 删除所有未绑定的失效条目，保留真正生
 
 只删除生效键为空的条目，不影响正在使用的快捷键；可反复执行。注销重登后
 系统设置界面才会完全同步。
+
+## 项目结构
+
+```
+cdp/
+├── core.py            跨平台核心：数据模型、配色、启动命令拼装
+├── platform_linux.py  平台集成：.desktop、hicolor 图标、进程检测、KDE 快捷键
+├── manager.py         操作层：增删改查与全部守卫，两个前端共用
+├── __main__.py        命令行：参数解析与文本输出
+└── tui.py             curses 交互界面
+```
+
+平台相关的代码全部收在 `platform_linux.py` 一处，移植到 macOS / Windows 时
+只需替换该模块——`core`、`manager` 与两个前端都不必改动。业务规则只存在于
+`manager.py`，命令行与交互界面因此不会出现行为分叉。
 
 ## 已知限制
 
