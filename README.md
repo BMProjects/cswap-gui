@@ -65,8 +65,12 @@ cdp import Personal --color green   # 现有账号 → Personal
 cdp add Work --color blue           # 另一个账号 → Work，启动后登录
 ```
 
-复制的是承载登录态的六项：`Cookies`（会话）、`config.json`（OAuth 令牌）、
-`Local Storage`、`Local State`、`ant-did`（设备标识）及 `Cookies-journal`。
+复制的是承载登录态的五项：`Cookies`（会话）、`config.json`（OAuth 令牌）、
+`Local Storage`、`Local State` 及 `Cookies-journal`。
+
+**刻意不复制 `ant-did`（设备标识）**：复制它会让新 profile 与来源伪装成同一台
+设备，同一标识被两个会话并发使用会触发服务端的重新验证。留空则首次启动时自行
+生成新的，代价是可能需要过一次设备验证——这才是它本该有的样子。
 
 注意事项：
 
@@ -83,6 +87,36 @@ cdp add Work --color blue           # 另一个账号 → Work，启动后登录
 （Claude Desktop 在界面外被启停也能反映出来）。
 
 所有操作都委托给 `cdp` CLI，界面本身不含业务逻辑。
+
+## 在 profile 里登录时会跳回默认账号（重要）
+
+**现象**：在某个 profile 里点登录，验证走完却跳回默认账号，该 profile 依旧是空的。
+
+**原因**：登录回调走 `claude://` 协议，而系统里该协议的处理器是官方的
+`com.anthropic.Claude.desktop`，其 `Exec=claude-desktop %U` **不带
+`--user-data-dir`**——回调因此必然由默认配置接管，发起登录的 profile 收不到。
+这是单一全局协议与多 profile 的固有冲突：系统无从知道是哪个 profile 发起的。
+
+**规避办法**：登录期间把该协议临时指向目标 profile 的启动器，完成后还原。
+
+```bash
+# 1. 登录前：把 claude:// 指向目标 profile（这里是 apple）
+xdg-mime default claude-profile-apple.desktop x-scheme-handler/claude
+
+# 2. 启动该 profile 并完成登录
+cdp launch apple
+
+# 3. 登录完成后还原
+xdg-mime default com.anthropic.Claude.desktop x-scheme-handler/claude
+```
+
+profile 启动器的 `Exec` 里已带 `%U`，能正常接收回调 URL。查看当前指向：
+
+```bash
+xdg-mime query default x-scheme-handler/claude
+```
+
+还原后，日常点击 `claude://` 链接仍由默认配置打开。
 
 ## KDE 全局快捷键会堆积
 

@@ -21,9 +21,12 @@ DEFAULT_COLOR="orange"
 # Claude Desktop 自身的默认数据目录,cdp import 的来源。
 DEFAULT_PROFILE="$CONFIG_HOME/Claude"
 # 承载登录态的文件:Cookies 存 sessionKey,config.json 存 oauth:tokenCache,
-# Local State 决定 cookie 解密方式,ant-did 是设备标识。少一项都可能导致
-# 导入后仍要求重新登录。
-AUTH_ITEMS=(Cookies Cookies-journal "Local Storage" "Local State" ant-did config.json)
+# Local State 决定 cookie 的解密方式。
+#
+# 刻意不含 ant-did(设备标识):复制它会让新 profile 与来源伪装成同一台设备,
+# 同一标识被两个会话并发使用会触发服务端的重新验证。留空则首次启动时自行
+# 生成新的,代价是可能需要过一次设备验证——这才是它本该有的样子。
+AUTH_ITEMS=(Cookies Cookies-journal "Local Storage" "Local State" config.json)
 
 # 与参考项目 (odahcam/claude-desktop-profiles) 一致的调色板。
 color_hex() {
