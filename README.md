@@ -40,8 +40,8 @@ cd claude-desktop-profiles-linux
 ## 使用
 
 ```bash
-cdp add Work --color blue      # 创建 profile，同时生成应用菜单启动器
-cdp add Personal --color green
+cdp import Personal            # 复制当前已登录的账号，开箱即登录
+cdp add Work --color blue      # 创建空 profile，首次启动时自行登录
 cdp list                       # 名称 / 配色 / 运行状态 / 磁盘占用 / 启动器
 cdp launch Work                # 启动（已运行则聚焦）
 cdp color Work purple          # 换配色与图标
@@ -53,6 +53,28 @@ cdp gui                        # 打开图形管理界面
 配色：`orange` `red` `yellow` `green` `teal` `blue` `purple` `pink`
 
 创建后可直接在应用菜单里搜索「Claude — Work」启动，无需终端。
+
+### 导入当前已登录的账号
+
+`cdp import <名称>` 把 Claude Desktop 默认配置（`~/.config/Claude`）里的登录态
+复制到新 profile，省去重新登录。典型用法是先把现有环境收编成一个具名 profile，
+再新建其他账号：
+
+```bash
+cdp import Personal --color green   # 现有账号 → Personal
+cdp add Work --color blue           # 另一个账号 → Work，启动后登录
+```
+
+复制的是承载登录态的六项：`Cookies`（会话）、`config.json`（OAuth 令牌）、
+`Local Storage`、`Local State`、`ant-did`（设备标识）及 `Cookies-journal`。
+
+注意事项：
+
+- **导入前请完全退出 Claude Desktop**。运行中复制 SQLite 会得到写入中途的快照，
+  导入的登录态可能损坏；`cdp import` 检测到其运行会直接拒绝。
+- **目标 profile 必须是空的**，已有数据时拒绝覆盖。
+- 导入后该 profile 与默认配置是**同一个账号**，且各自持有一份凭据副本。
+  想换账号就在新 profile 里退出登录再重新登录。
 
 ## 图形界面
 

@@ -158,6 +158,9 @@ class ProfilesGui:
         ttk.Button(
             row, text="新建 Profile", style="Accent.TButton", command=self.add_profile
         ).pack(side="left")
+        ttk.Button(row, text="导入当前登录账号", command=self.import_current).pack(
+            side="left", padx=6
+        )
         ttk.Button(row, text="刷新", command=self.refresh).pack(side="left", padx=6)
 
         self.message_var = tk.StringVar(value="加载中…")
@@ -213,7 +216,8 @@ class ProfilesGui:
                 style="Muted.TLabel",
                 text=(
                     "还没有任何 profile。\n\n"
-                    "点击下方「新建 Profile」创建一个，\n"
+                    "「导入当前登录账号」——复制现在已登录的账号，无需重新登录\n"
+                    "「新建 Profile」——建一个空白的，首次启动时自己登录\n\n"
                     "每个 profile 拥有独立的登录状态、设置与 MCP 连接器，\n"
                     "可同时运行、互不干扰。"
                 ),
@@ -287,6 +291,29 @@ class ProfilesGui:
         self.run_async(
             lambda: run_cdp("add", name),
             lambda _out: self._done(f"已创建「{name}」"),
+        )
+
+    def import_current(self) -> None:
+        """把当前已登录的 Claude Desktop 复制成一个新 profile，开箱即登录。
+
+        cdp import 自身会拒绝在 Claude Desktop 运行时执行（复制运行中的
+        SQLite 会得到残缺快照），这里只负责把该错误原样呈现给用户。
+        """
+        name = simpledialog.askstring(
+            "导入当前登录账号",
+            "新 profile 名称：\n\n"
+            "将复制当前 Claude Desktop 的登录状态，\n"
+            "创建后无需重新登录。请先完全退出 Claude Desktop。",
+            parent=self.root,
+        )
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        self._busy = True
+        self.message_var.set(f"正在导入到「{name}」…")
+        self.run_async(
+            lambda: run_cdp("import", name),
+            lambda _out: self._done(f"已导入「{name}」，可直接启动"),
         )
 
     def launch(self, name: str) -> None:
