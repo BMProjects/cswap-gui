@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+# cdp — Claude Desktop Profiles for Linux.
+#
+# 让 Claude Desktop 的多个账号并行运行:每个 profile 用独立的
+# --user-data-dir 启动,Cookies / Local Storage / config.json /
+# claude_desktop_config.json 全部隔离,即独立登录、独立设置、独立 MCP。
+#
+# Electron 的单实例锁按 user-data-dir 划分,所以同一 profile 重复启动会
+# 聚焦已有窗口,不同 profile 则各自独立运行——无需 Wayland 下受限的外部
+# 窗口工具。--class 让每个 profile 拿到独立 WM_CLASS,任务栏分组互不混淆。
+set -euo pipefail
+
+CLAUDE_BIN="${CDP_CLAUDE_BIN:-claude-desktop}"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+APP_DIR="$DATA_HOME/applications"
+ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
+PROFILE_PREFIX="Claude-"
+COLOR_FILE=".cdp-color"
+DEFAULT_COLOR="orange"
+
+# 与参考项目 (odahcam/claude-desktop-profiles) 一致的调色板。
+color_hex() {
+    case "$1" in
+        orange) echo "#D97757" ;;
+        red)    echo "#C6483C" ;;
+        yellow) echo "#D9A441" ;;
+        green)  echo "#4C9A5A" ;;
+        teal)   echo "#3F8F8A" ;;
+        blue)   echo "#3D74D9" ;;
+        purple) echo "#7A5AA8" ;;
+        pink)   echo "#C05B87" ;;
+        *)      return 1 ;;
+    esac
+}
+COLOR_NAMES="orange red yellow green teal blue purple pink"
+
+die() { echo "cdp: $*" >&2; exit 1; }
+
+# 名称 → 文件名安全的 slug。空结果视为非法名。
+slug_of() {
+    local s
+    s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')"
+    s="$(printf '%s' "$s" | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+    printf '%s' "$s"
+}
+
+profile_dir()  { printf '%s/%s%s' "$CONFIG_HOME" "$PROFILE_PREFIX" "$1"; }
+desktop_file() { printf '%s/claude-profile-%s.desktop' "$APP_DIR" "$1"; }
+icon_file()    { printf '%s/claude-profile-%s.svg' "$ICON_DIR" "$1"; }
+wm_class()     { printf 'claude-profile-%s' "$1"; }
+
+require_claude() {
+    command -v "$CLAUDE_BIN" >/dev/null \
+        || die "找不到 $CLAUDE_BIN。请先安装 Claude Desktop,或设置 CDP_CLAUDE_BIN 指向可执行文件。"
+}
+
+# 已存在的 profile 名(即 $CONFIG_HOME 下的 Claude-* 目录),每行一个。
+list_profiles() {
+    local d name
+    for d in "$CONFIG_HOME/$PROFILE_PREFIX"*; do
+        [ -d "$d" ] || continue
+        name="$(basename "$d")"
+        printf '%s\n' "${name#$PROFILE_PREFIX}"
+    done
+}
+
+profile_color() {
+    local f; f="$(profile_dir "$1")/$COLOR_FILE"
+    if [ -r "$f" ]; then head -n1 "$f"; else printf '%s' "$DEFAULT_COLOR"; fi
+}
+
+is_running() {
+    pgrep -f -- "--user-data-dir=$(profile_dir "$1")" >/dev/null 2>&1
+}
+
+# 纯 SVG 生成,不依赖 ImageMagick/Inkscape,保证 install 零依赖。
+# 配色方块 + 白色 Claude 风格放射徽记。
+write_icon() {
+    local slug="$1" hex="$2" rays="" i angle
+    for i in 0 1 2 3 4 5 6 7; do
+        angle=$((i * 45))
+        rays="$rays
+    <rect x=\"60\" y=\"22\" width=\"8\" height=\"30\" rx=\"4\" transform=\"rotate($angle 64 64)\"/>"
+    done
+    mkdir -p "$ICON_DIR"
+    cat > "$(icon_file "$slug")" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="$hex"/>
+  <g fill="#FFFFFF">$rays
+    <circle cx="64" cy="64" r="9"/>
+  </g>
+</svg>
+EOF
+}
+
+write_launcher() {
+    local name="$1" slug="$2" dir; dir="$(profile_dir "$name")"
+    mkdir -p "$APP_DIR"
+    cat > "$(desktop_file "$slug")" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Claude — $name
+Comment=Claude Desktop（$name 账号配置）
+Exec=$CLAUDE_BIN --user-data-dir=$dir --class=$(wm_class "$slug") %U
+Icon=claude-profile-$slug
+StartupNotify=true
+StartupWMClass=$(wm_class "$slug")
+SingleMainWindow=true
+Categories=Utility;
+Keywords=claude;profile;$slug;
+EOF
+}
+
+refresh_desktop_db() {
+    command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" 2>/dev/null || true
+}
+
+assert_exists() {
+    [ -d "$(profile_dir "$1")" ] || die "profile「$1」不存在。用 cdp list 查看,或 cdp add「$1」创建。"
+}
+
+cmd_add() {
+    local name="" color="$DEFAULT_COLOR"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --color) color="${2:-}"; shift 2 || die "--color 缺少取值" ;;
+            --color=*) color="${1#*=}"; shift ;;
+            -*) die "未知参数: $1" ;;
+            *) [ -n "$name" ] && die "只能指定一个名称"; name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || die "用法: cdp add <名称> [--color <颜色>]"
+    local hex; hex="$(color_hex "$color")" || die "未知颜色「$color」。可选: $COLOR_NAMES"
+    local slug; slug="$(slug_of "$name")"
+    [ -n "$slug" ] || die "名称「$name」无法转成合法标识,请改用字母或数字。"
+    require_claude
+
+    local dir; dir="$(profile_dir "$name")"
+    [ -d "$dir" ] && die "profile「$name」已存在。"
+    mkdir -p "$dir"
+    printf '%s\n' "$color" > "$dir/$COLOR_FILE"
+    write_icon "$slug" "$hex"
+    write_launcher "$name" "$slug"
+    refresh_desktop_db
+    echo "已创建 profile「$name」($color)"
+    echo "  数据目录: $dir"
+    echo "  启动器  : $(desktop_file "$slug")"
+    echo "  启动    : cdp launch $name（或在应用菜单搜索 Claude — $name）"
+}
+
+cmd_list() {
+    local porcelain=0
+    [ "${1:-}" = "--porcelain" ] && porcelain=1
+    local names; names="$(list_profiles)"
+
+    # 机器可读:name<TAB>color<TAB>running(0|1)<TAB>size<TAB>launcher(0|1)
+    # 供 GUI 消费,避免其解析人读表格,也免得在两处重复 profile 发现逻辑。
+    if [ "$porcelain" -eq 1 ]; then
+        local n
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$n" \
+                "$(profile_color "$n")" \
+                "$(is_running "$n" && echo 1 || echo 0)" \
+                "$(du -sh "$(profile_dir "$n")" 2>/dev/null | cut -f1)" \
+                "$([ -f "$(desktop_file "$(slug_of "$n")")" ] && echo 1 || echo 0)"
+        done <<< "$names"
+        return 0
+    fi
+
+    if [ -z "$names" ]; then
+        echo "尚无 profile。创建: cdp add <名称> [--color <颜色>]"
+        return 0
+    fi
+    # 表头与状态值一律用 ASCII:printf 的宽度按字节算,混入中文会让列错位。
+    printf '%-18s %-8s %-9s %-7s %s\n' NAME COLOR STATE SIZE LAUNCHER
+    local n color state size launcher
+    while IFS= read -r n; do
+        [ -n "$n" ] || continue
+        color="$(profile_color "$n")"
+        if is_running "$n"; then state="running"; else state="-"; fi
+        size="$(du -sh "$(profile_dir "$n")" 2>/dev/null | cut -f1)"
+        if [ -f "$(desktop_file "$(slug_of "$n")")" ]; then launcher="ok"; else launcher="MISSING"; fi
+        printf '%-18s %-8s %-9s %-7s %s\n' "$n" "$color" "$state" "${size:-?}" "$launcher"
+    done <<< "$names"
+}
+
+cmd_launch() {
+    local name="${1:-}"
+    [ -n "$name" ] || die "用法: cdp launch <名称>"
+    assert_exists "$name"
+    require_claude
+    local slug; slug="$(slug_of "$name")"
+    if is_running "$name"; then
+        echo "profile「$name」已在运行,Electron 会聚焦其已有窗口。"
+    fi
+    setsid "$CLAUDE_BIN" \
+        --user-data-dir="$(profile_dir "$name")" \
+        --class="$(wm_class "$slug")" \
+        >/dev/null 2>&1 < /dev/null &
+    echo "已启动「$name」"
+}
+
+cmd_color() {
+    local name="${1:-}" color="${2:-}"
+    [ -n "$name" ] && [ -n "$color" ] || die "用法: cdp color <名称> <颜色>   可选: $COLOR_NAMES"
+    assert_exists "$name"
+    local hex; hex="$(color_hex "$color")" || die "未知颜色「$color」。可选: $COLOR_NAMES"
+    local slug; slug="$(slug_of "$name")"
+    printf '%s\n' "$color" > "$(profile_dir "$name")/$COLOR_FILE"
+    write_icon "$slug" "$hex"
+    write_launcher "$name" "$slug"
+    refresh_desktop_db
+    echo "profile「$name」颜色已改为 $color"
+}
+
+cmd_remove() {
+    local name="" purge=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --purge) purge=1; shift ;;
+            -*) die "未知参数: $1" ;;
+            *) [ -n "$name" ] && die "只能指定一个名称"; name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || die "用法: cdp remove <名称> [--purge]"
+    assert_exists "$name"
+    is_running "$name" && die "profile「$name」正在运行,请先退出再移除。"
+
+    local slug; slug="$(slug_of "$name")"
+    rm -f "$(desktop_file "$slug")" "$(icon_file "$slug")"
+    refresh_desktop_db
+    echo "已移除启动器与图标。"
+
+    local dir; dir="$(profile_dir "$name")"
+    if [ "$purge" -eq 1 ]; then
+        # 数据不可恢复,交互式运行时再确认一次。
+        if [ -t 0 ]; then
+            printf '确认删除数据目录 %s ?(登录态与聊天记录将不可恢复)[y/N] ' "$dir"
+            read -r reply
+            case "$reply" in [yY]*) ;; *) echo "已保留数据目录。"; return 0 ;; esac
+        fi
+        rm -rf "$dir"
+        echo "已删除数据目录 $dir"
+    else
+        echo "数据目录保留在 $dir（加 --purge 可一并删除）"
+    fi
+}
+
+cmd_gui() {
+    # install.sh 会把本脚本软链到 ~/.local/bin,必须先解引用才能找到同仓库的 app/。
+    local self; self="$(readlink -f "${BASH_SOURCE[0]}")"
+    local gui; gui="$(dirname "$self")/../app/cdp_gui.py"
+    [ -f "$gui" ] || die "找不到 cdp_gui.py($gui),请重新运行 install.sh。"
+    python3 -c 'import tkinter' 2>/dev/null \
+        || die "缺少 tkinter。请运行: sudo apt install python3-tk"
+    exec python3 "$gui"
+}
+
+usage() {
+    cat <<EOF
+cdp — Claude Desktop Profiles for Linux
+
+用法:
+  cdp add <名称> [--color <颜色>]   创建 profile 并生成应用菜单启动器
+  cdp list                          列出所有 profile(颜色/运行状态/占用)
+  cdp launch <名称>                 启动 profile(已运行则聚焦)
+  cdp color <名称> <颜色>           更换配色与图标
+  cdp remove <名称> [--purge]       移除启动器;--purge 连数据一起删
+  cdp gui                           打开图形管理界面
+
+颜色: $COLOR_NAMES
+
+每个 profile 的数据独立存放在 $CONFIG_HOME/${PROFILE_PREFIX}<名称>/,
+互不共享登录态、设置与 MCP 连接器。
+EOF
+}
+
+main() {
+    local cmd="${1:-}"; [ $# -gt 0 ] && shift || true
+    case "$cmd" in
+        add)    cmd_add "$@" ;;
+        list|ls) cmd_list "$@" ;;
+        launch|run) cmd_launch "$@" ;;
+        color)  cmd_color "$@" ;;
+        remove|rm) cmd_remove "$@" ;;
+        gui)    cmd_gui "$@" ;;
+        ""|help|-h|--help) usage ;;
+        *) die "未知命令「$cmd」。运行 cdp help 查看用法。" ;;
+    esac
+}
+
+main "$@"

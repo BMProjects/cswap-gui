@@ -1,139 +1,87 @@
-# claude-swap GUI
+# Claude Desktop Profiles for Linux
 
-A zero-dependency tkinter front-end for
-[claude-swap](https://github.com/realiti4/claude-swap) (`cswap`):
-switch between Claude Code subscription accounts with one click and
-watch per-account usage quotas at a glance.
+在 Linux 上并行运行多个 Claude Desktop 账号。每个 profile 拥有独立的登录状态、
+聊天记录、设置与 MCP 连接器，可同时开着互不干扰。
 
-Everything lives in a single file, [cswap_gui.py](cswap_gui.py),
-using only the Python standard library.
+一个 shell CLI + 一个 tkinter 管理界面，无第三方依赖、无 Electron 包装、无遥测。
 
-> Note: the interface text is currently Chinese.
+## 工作原理
 
-## Features
+Claude Desktop 是 Electron 应用，因此支持 Chromium 的 `--user-data-dir`。
+每个 profile 就是一个独立的数据目录：
 
-- Lists all managed accounts and marks the active one
-- Three usage bars per account:
-  - **5h** — the 5-hour rolling window
-  - **7d** — the 7-day window
-  - **Fable** — the separate weekly quota for the Fable model
-    (a scoped window, provided by cswap ≥ 0.17; any per-model quotas
-    the upstream adds later will show up automatically, no code change)
-- Each bar shows the reset time and remaining countdown; for inactive
-  accounts cswap serves last-known data, and measurements older than
-  15 minutes are labelled with their age
-- Accounts with broken credentials (`no_credentials` / `token_expired`)
-  get a ⚠ warning, and switching to them prompts to fix via `/login` +
-  `cswap --add-account` first
-- One-click "add current account" and "upgrade cswap"
-- Optional auto-refresh every 5 minutes (off by default, enable via
-  the checkbox). It refreshes **only the active account**, via
-  `cswap --status --json`, so accounts you have switched away from
-  are never polled and spend nothing from their own rate-limit
-  budget. The manual "刷新" button still refreshes every account via
-  `cswap --list --json`. Auto-refresh failures only appear in the
-  status bar instead of popping up dialogs
-- Resilient display during token hiccups: when an account's status
-  turns `token_expired` / `relogin_required` / `unavailable`, the GUI
-  keeps showing the last good usage bars (with an accumulating age
-  label) alongside the status note, instead of blanking out —
-  a long-open window recovers by itself on the next good tick
-- Handles cswap 0.19's `relogin_required` status (dead refresh token,
-  account quarantined): flagged like other credential problems, with
-  a hint to `/login` + `cswap --add-account`
-
-## Dependencies
-
-| Dependency | Install |
-|------------|---------|
-| Python 3.10+ with tkinter | `sudo apt install python3-tk` (Debian/Ubuntu) |
-| claude-swap ≥ 0.17 | `uv tool install claude-swap` |
-
-## Running
-
-```sh
-python3 cswap_gui.py
+```
+~/.config/Claude-Work/       # Cookies、Local Storage、config.json、
+~/.config/Claude-Personal/   # claude_desktop_config.json 各自独立
 ```
 
-### Desktop entry (optional)
+Electron 的单实例锁按 `--user-data-dir` 划分，因此：
 
-```sh
+- 同一 profile 重复启动 → 聚焦已有窗口，不会开出第二个实例
+- 不同 profile → 各自独立的进程，可同时运行
+
+`--class` 让每个 profile 拿到独立的 `WM_CLASS`，配合 `.desktop` 里的
+`StartupWMClass`，任务栏/程序坞会把各 profile 的窗口分开归组。
+
+## 安装
+
+需要 Claude Desktop、`python3-tk`（仅图形界面需要）：
+
+```bash
+sudo apt install python3-tk     # Debian/Ubuntu
+git clone https://github.com/BMProjects/claude-desktop-profiles-linux.git
+cd claude-desktop-profiles-linux
 ./install.sh
 ```
 
-The script installs [cswap-gui.desktop](cswap-gui.desktop) (with the
-`@PROJECT_DIR@` placeholder in `Exec=` replaced by the repository's
-actual path) into `~/.local/share/applications/`, and the icon
-[cswap-gui.svg](cswap-gui.svg) into
-`~/.local/share/icons/hicolor/scalable/apps/`. Afterwards search for
-"Claude Account Switcher" in your application menu. To uninstall,
-delete those two installed files.
+安装脚本把 `cdp` 软链到 `~/.local/bin`，并把「Claude Desktop 多账号」管理界面
+装进应用菜单。软链而非拷贝，更新仓库后立即生效。
 
-## Implementation notes
+## 使用
 
-- Data comes from `cswap --list --json` (`schemaVersion: 1`). Upstream
-  promises this contract is additive-only; if the schemaVersion is ever
-  bumped, the GUI fails loudly instead of silently misparsing.
-- Only stdout is parsed as JSON, so warnings on stderr cannot corrupt
-  the payload.
-- Switching, adding accounts and upgrading all run in background
-  threads; the UI never blocks.
+```bash
+cdp add Work --color blue      # 创建 profile，同时生成应用菜单启动器
+cdp add Personal --color green
+cdp list                       # 名称 / 配色 / 运行状态 / 磁盘占用 / 启动器
+cdp launch Work                # 启动（已运行则聚焦）
+cdp color Work purple          # 换配色与图标
+cdp remove Work                # 移除启动器，保留数据
+cdp remove Work --purge        # 连数据目录一并删除（会二次确认）
+cdp gui                        # 打开图形管理界面
+```
 
-### Does querying the quota consume tokens?
+配色：`orange` `red` `yellow` `green` `teal` `blue` `purple` `pink`
 
-No. The usage query goes to the read-only metadata endpoint
-`GET https://api.anthropic.com/api/oauth/usage` (the same one Claude
-Code's built-in `/usage` command uses). It triggers no model inference
-and counts against no quota window.
+创建后可直接在应用菜单里搜索「Claude — Work」启动，无需终端。
 
-The real constraint is **HTTP 429 rate limiting on that endpoint**.
-Per cswap's own measurements (`poll_policy.py`), the budget is roughly
-**28-30 requests per rolling 60-minute window, per token**, and it is
-not a leaky bucket: capacity returns only as old requests age out of
-the trailing hour, so a burst can saturate a token for a full hour and
-pausing does not restore headroom early.
+## 图形界面
 
-The GUI is deliberately conservative about this:
+`cdp gui`，或在应用菜单打开「Claude Desktop 多账号」。每个 profile 一张卡片，
+显示配色、运行状态与占用，可一键启动、换色、移除，每 5 秒自动刷新运行状态
+（Claude Desktop 在界面外被启停也能反映出来）。
 
-- Auto-refresh is **off by default**, and when enabled runs every
-  5 minutes (12/hour) — comfortably under cswap's own ≤20/hour target,
-  leaving headroom for manual commands and other surfaces
-- Auto-refresh queries **only the active account**; switched-away
-  accounts are never polled
-- cswap itself adds a 180 s shared cache (multiple open surfaces do
-  not multiply requests), a 360 s floor for an hour after any 429, and
-  AIMD backoff up to 30 minutes on a contended token
-- Credential safety: while Claude Code is running, the active
-  account's OAuth token is never refreshed (avoids refresh races)
+所有操作都委托给 `cdp` CLI，界面本身不含业务逻辑。
 
-Worth knowing: if an account breaks (expired subscription, dead
-credentials), its failing fetches keep consuming that token's budget.
-Consider removing such an account until it is fixed.
+## 已知限制
 
-## Companion timers (optional, for reference)
+- **Wayland 下无法由外部聚焦窗口**：聚焦依赖 Electron 自身的单实例机制，
+  正常可用；但若某 profile 的窗口被最小化到托盘，行为取决于 Claude Desktop。
+- **profile 首次创建约占 12 MB**，随聊天记录与缓存增长。
+- **不共享登录态是特性而非缺陷**：每个 profile 都需各自登录一次。
 
-This is the author's own systemd user timer. The GUI does not depend
-on it; it is listed as a reference for the same quota-management
-setup:
+## 与 cswap 的关系
 
-| Unit | Schedule | Purpose |
-|------|----------|---------|
-| `ai-cli-maintenance.timer` | daily 05:00 + 3 min after boot | upgrade the CLIs, then send one minimal haiku request so the 5h quota window starts early in the day (Fable is a weekly quota — no warmup needed) |
+本项目管理的是 **Claude Desktop 桌面应用**的多账号。若要在 **Claude Code CLI**
+中切换账号，请用 [claude-swap](https://github.com/realiti4/claude-swap)（`cswap`），
+两者互不冲突、可同时使用。
 
-Unit files live in `~/.config/systemd/user/`. Keeping claude-swap
-itself up to date is done on demand via the GUI's "upgrade cswap"
-button (a former weekly auto-upgrade timer has been retired).
+## 致谢
 
-## Acknowledgements
+设计借鉴 [odahcam/claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles)
+（macOS，SwiftUI + Shell）。本项目是面向 Linux 的重新实现：隔离机制同样基于
+`--user-data-dir`，但 Linux 无需 APFS 克隆、无需改 app 签名与图标，
+直接以不同参数启动同一个二进制即可，因而实现更简单。
 
-- [claude-swap](https://github.com/realiti4/claude-swap) by
-  [@realiti4](https://github.com/realiti4) — the multi-account
-  switcher that does all the real work; this project is only a thin
-  graphical shell over its excellent JSON interface
-- [Claude Code](https://claude.com/claude-code) by
-  [Anthropic](https://www.anthropic.com) — the coding agent whose
-  accounts are being switched
+## 许可
 
-## License
-
-[MIT](LICENSE)
+MIT
