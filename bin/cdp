@@ -330,6 +330,39 @@ cmd_remove() {
     fi
 }
 
+# Claude Desktop 启动时无条件向 KDE 注册全局热键 Ctrl+Alt+Space(应用内硬编码
+# 的默认值,不写入 profile 也就无法预先关闭)。每个 profile 都是一次新注册,而
+# 该键已被首个实例占用,于是后来者绑定失败、留下一条「生效键为空」的惰性条目,
+# 并弹出系统设置的冲突提示。profile 删除后这些条目也不会自动消失。
+#
+# 惰性条目对应格式 <hash>-Ctrl+Alt+Space=,<默认键>,<说明>:第一段为空即未绑定,
+# 删掉它们不影响真正生效的那条。
+KDE_SHORTCUTS="${XDG_CONFIG_HOME:-$HOME/.config}/kglobalshortcutsrc"
+CLAUDE_SHORTCUT_GROUP="com.anthropic.Claude"
+
+cmd_prune_shortcuts() {
+    [ -f "$KDE_SHORTCUTS" ] || die "找不到 $KDE_SHORTCUTS(非 KDE 桌面?)。"
+    local writer
+    writer="$(command -v kwriteconfig6 || command -v kwriteconfig5 || true)"
+    [ -n "$writer" ] || die "找不到 kwriteconfig6/5,无法安全修改 KDE 配置。"
+
+    local pair key active removed=0 kept=0
+    while IFS= read -r pair; do
+        key="${pair%%=*}"; active="${pair#*=}"
+        if [ -z "$active" ]; then
+            "$writer" --file kglobalshortcutsrc --group "$CLAUDE_SHORTCUT_GROUP" \
+                --key "$key" --delete
+            removed=$((removed + 1))
+        else
+            kept=$((kept + 1))
+        fi
+    done < <(grep -oE "^[A-Fa-f0-9]{32}-[^=]+=[^,]*" "$KDE_SHORTCUTS" 2>/dev/null || true)
+
+    echo "已清理 $removed 条失效的 Claude 全局快捷键条目,保留 $kept 条生效中的。"
+    [ "$removed" -gt 0 ] && echo "提示:注销重登后系统设置界面才会完全同步。"
+    return 0
+}
+
 cmd_gui() {
     # install.sh 会把本脚本软链到 ~/.local/bin,必须先解引用才能找到同仓库的 app/。
     local self; self="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -352,6 +385,7 @@ cdp — Claude Desktop Profiles for Linux
   cdp color <名称> <颜色>           更换配色与图标
   cdp remove <名称> [--purge]       移除启动器;--purge 连数据一起删
   cdp gui                           打开图形管理界面
+  cdp prune-shortcuts               清理 KDE 中堆积的失效 Claude 全局快捷键
 
 颜色: $COLOR_NAMES
 
@@ -370,6 +404,7 @@ main() {
         color)  cmd_color "$@" ;;
         remove|rm) cmd_remove "$@" ;;
         gui)    cmd_gui "$@" ;;
+        prune-shortcuts) cmd_prune_shortcuts "$@" ;;
         ""|help|-h|--help) usage ;;
         *) die "未知命令「$cmd」。运行 cdp help 查看用法。" ;;
     esac
