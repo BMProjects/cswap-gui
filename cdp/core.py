@@ -31,7 +31,7 @@ COLOR_FILE = ".cdp-color"
 
 
 class CdpError(Exception):
-    """预期内的用户可读错误：CLI 打印后退出，TUI 显示在状态栏。"""
+    """An expected, user-readable error: printed by the CLI, shown in the TUI status line."""
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,7 @@ class Profile:
 
 @dataclass(frozen=True)
 class ProfileStatus:
-    """Profile 加上需要实时探测的状态，供列表展示。"""
+    """A profile plus the state that has to be probed live, for list display."""
 
     profile: Profile
     running: bool
@@ -69,7 +69,7 @@ class ProfileStatus:
 
 
 def slugify(name: str) -> str:
-    """名称 → 文件名安全的标识。空结果表示该名称不可用。"""
+    """Name to a filename-safe identifier. An empty result means the name is unusable."""
     kept = [c if c.isascii() and c.isalnum() else "-" for c in name.lower()]
     return "-".join(part for part in "".join(kept).split("-") if part)
 
@@ -80,7 +80,7 @@ def is_default_name(name: str) -> bool:
 
 def resolve_color(color: str) -> str:
     if color not in COLORS:
-        raise CdpError(f"未知颜色「{color}」。可选：{' '.join(COLORS)}")
+        raise CdpError(f"Unknown colour {color!r}. Available: {' '.join(COLORS)}")
     return COLORS[color]
 
 
@@ -99,10 +99,12 @@ def write_color(directory: Path, color: str) -> None:
 def launch_argv(
     binary: str, profile: Profile, extra: list[str] | None = None
 ) -> list[str]:
-    """启动 profile 的完整命令。
+    """Full command line for launching a profile.
 
-    系统自带的那个刻意不带任何参数：只有这样它的进程特征才与官方启动器一致，
-    claude:// 登录回调（其处理器同样不带 --user-data-dir）才会落到它身上。
+    The system-installed profile is deliberately launched with no arguments at
+    all: only then does its process signature match the official launcher, which
+    is what makes the claude:// login callback (whose handler likewise carries no
+    --user-data-dir) land on it.
     """
     if profile.is_default:
         return [binary]

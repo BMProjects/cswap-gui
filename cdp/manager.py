@@ -41,20 +41,22 @@ def find_profile(name: str) -> Profile:
     if is_default_name(name):
         if not plat.default_profile_exists():
             raise CdpError(
-                f"找不到 {plat.DEFAULT_PROFILE_DIR}，请先正常启动一次 Claude Desktop。"
+                f"{plat.DEFAULT_PROFILE_DIR} not found. Start Claude Desktop normally once first."
             )
         return _default_profile()
 
     directory = plat.profile_dir(name)
     if not directory.is_dir():
-        raise CdpError(f"profile「{name}」不存在。用 cdp list 查看，或 cdp add 创建。")
+        raise CdpError(
+            f"No profile named {name!r}. Run 'cdp list' to see them, or 'cdp add' to create one."
+        )
     return Profile(
         name=name, directory=directory, color=read_color(directory), is_default=False
     )
 
 
 def list_profiles() -> list[Profile]:
-    """系统自带的排在最前，其后是 cdp 建的。"""
+    """The system-installed profile first, then the ones cdp created."""
     profiles: list[Profile] = []
     if plat.default_profile_exists():
         profiles.append(_default_profile())
@@ -96,33 +98,35 @@ def list_status(with_size: bool = True) -> list[ProfileStatus]:
 def _reject_default(profile: Profile, action: str) -> None:
     if profile.is_default:
         raise CdpError(
-            f"「{DEFAULT_NAME}」是系统自带的 Claude Desktop 配置，"
-            f"由安装本身管理，不能{action}。"
+            f"{DEFAULT_NAME!r} is the system's own Claude Desktop profile, managed by the "
+            f"installation itself. It cannot be {action}."
         )
 
 
 def _require_claude() -> None:
     if not plat.claude_available():
         raise CdpError(
-            f"找不到 {plat.CLAUDE_BIN}。请先安装 Claude Desktop，"
-            "或设置 CDP_CLAUDE_BIN 指向可执行文件。"
+            f"{plat.CLAUDE_BIN} not found. Install Claude Desktop, or point CDP_CLAUDE_BIN "
+            "at the executable."
         )
 
 
 def add_profile(name: str, color: str = DEFAULT_COLOR) -> Profile:
     name = name.strip()
     if not name:
-        raise CdpError("名称不能为空。")
+        raise CdpError("The name cannot be empty.")
     if is_default_name(name):
-        raise CdpError(f"「{DEFAULT_NAME}」是保留名称，请换一个。")
+        raise CdpError(f"{DEFAULT_NAME!r} is a reserved name. Please choose another.")
     if not slugify(name):
-        raise CdpError(f"名称「{name}」无法转成合法标识，请改用字母或数字。")
+        raise CdpError(
+            f"The name {name!r} cannot be turned into a valid identifier. Use letters or digits."
+        )
     resolve_color(color)
     _require_claude()
 
     directory = plat.profile_dir(name)
     if directory.is_dir():
-        raise CdpError(f"profile「{name}」已存在。")
+        raise CdpError(f"A profile named {name!r} already exists.")
 
     directory.mkdir(parents=True)
     profile = Profile(name=name, directory=directory, color=color, is_default=False)
@@ -132,7 +136,7 @@ def add_profile(name: str, color: str = DEFAULT_COLOR) -> Profile:
 
 def set_color(name: str, color: str) -> Profile:
     profile = find_profile(name)
-    _reject_default(profile, "改配色（它用的是官方图标）")
+    _reject_default(profile, "recoloured (it uses the official icon)")
     resolve_color(color)
     updated = Profile(
         name=profile.name,
@@ -152,7 +156,7 @@ def _write_desktop_integration(profile: Profile) -> None:
 
 
 def launch(name: str) -> tuple[Profile, bool]:
-    """启动 profile，返回 (profile, 启动前是否已在运行)。"""
+    """Launch a profile. Returns (profile, whether it was already running)."""
     profile = find_profile(name)
     _require_claude()
     already = plat.is_running(profile)
@@ -162,14 +166,15 @@ def launch(name: str) -> tuple[Profile, bool]:
 
 
 def remove_profile(name: str, purge: bool = False) -> tuple[Profile, bool]:
-    """移除启动器与图标；purge 为真时连数据目录一并删除。
+    """Remove the launcher and icon; also delete the data directory when purge is set.
 
-    调用方负责在 purge 前向用户确认——数据不可恢复。
+    The caller is responsible for confirming with the user before purging —
+    the data is unrecoverable.
     """
     profile = find_profile(name)
-    _reject_default(profile, "移除")
+    _reject_default(profile, "removed")
     if plat.is_running(profile):
-        raise CdpError(f"profile「{name}」正在运行，请先退出再移除。")
+        raise CdpError(f"Profile {name!r} is running. Quit it before removing.")
 
     plat.remove_launcher(profile.slug)
     plat.refresh_desktop_db()

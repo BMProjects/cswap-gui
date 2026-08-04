@@ -90,19 +90,14 @@ Run `cdp` with no arguments, or open "Claude Desktop Profiles" from the
 application menu.
 
 ```
- Claude Desktop 多账号                          2 个 · 1 个运行中
-──────────────────────────────────────────────────────────────────
- ▸ ● Default      系统自带   运行中    594M
-   ● work         blue                 12M
-──────────────────────────────────────────────────────────────────
- 已启动「Default」
- ↑↓ 选择  Enter 启动  c 配色  d 删除  a 新建  r 刷新  ? 帮助  q 退出
+ Claude Desktop Profiles                      2 profiles · 1 running
+────────────────────────────────────────────────────────────────────
+ ▸ ● Default      system     running    594M
+   ● work         blue                   12M
+────────────────────────────────────────────────────────────────────
+ Launched 'Default'
+ ↑↓ select  Enter launch  c colour  d delete  a new  r refresh  ? help  q quit
 ```
-
-> **Note:** the CLI and interactive interface currently speak Chinese; only this
-> README is in English. Translating the UI is a matter of the user-facing strings
-> in `cdp/__main__.py`, `cdp/tui.py`, and `cdp/manager.py` — open an issue if you
-> would find that useful.
 
 Key hints stay pinned to the bottom, and destructive actions always ask for
 confirmation with "no" as the default. Running state refreshes every 3 seconds;

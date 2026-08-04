@@ -36,7 +36,7 @@ PAIR_HEADER = 103
 
 
 def display_width(text: str) -> int:
-    """终端列宽：中日韩字符占两列，按字符数算会让列错位。"""
+    """Terminal column width: CJK characters occupy two cells."""
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
 
 
@@ -103,7 +103,7 @@ class Tui:
         return curses.color_pair(number) if self.has_color else curses.A_NORMAL
 
     def put(self, y: int, x: int, text: str, attr: int = curses.A_NORMAL) -> None:
-        """越界写入会让 curses 抛错，统一在这里裁剪。"""
+        """curses raises on out-of-bounds writes; clip them centrally here."""
         height, width = self.stdscr.getmaxyx()
         if y < 0 or y >= height or x >= width:
             return
@@ -125,7 +125,7 @@ class Tui:
         self.cursor = max(0, min(self.cursor, len(self.rows) - 1))
 
     def poll_running(self) -> None:
-        """只更新运行状态，不重算磁盘占用。"""
+        """Refresh running state only; do not recompute disk usage."""
         if not self.rows:
             return
         try:
@@ -152,16 +152,20 @@ class Tui:
         self.stdscr.erase()
         height, width = self.stdscr.getmaxyx()
         if height < 8 or width < 46:
-            self.put(0, 0, "终端太小，请放大窗口", curses.A_BOLD)
+            self.put(
+                0, 0, "Terminal too small - please enlarge the window", curses.A_BOLD
+            )
             self.stdscr.refresh()
             return
 
-        self.put(0, 1, "Claude Desktop 多账号", curses.A_BOLD | self.pair(PAIR_HEADER))
+        self.put(
+            0, 1, "Claude Desktop Profiles", curses.A_BOLD | self.pair(PAIR_HEADER)
+        )
         running = sum(1 for r in self.rows if r.running)
         self.put(
             0,
             width - 22,
-            f"{len(self.rows)} 个 · {running} 个运行中",
+            f"{len(self.rows)} profiles · {running} running",
             self.pair(PAIR_DIM),
         )
         self.put(1, 0, "─" * (width - 1), self.pair(PAIR_DIM))
@@ -175,17 +179,19 @@ class Tui:
 
     def _draw_rows(self, top: int, bottom: int, width: int) -> None:
         if not self.rows:
-            self.put(top + 1, 2, "没有检测到 Claude Desktop 配置。", curses.A_BOLD)
+            self.put(
+                top + 1, 2, "No Claude Desktop configuration found.", curses.A_BOLD
+            )
             self.put(
                 top + 3,
                 2,
-                "请先正常启动一次 Claude Desktop，它会作为",
+                "Start Claude Desktop normally once; it will show up",
                 self.pair(PAIR_DIM),
             )
             self.put(
                 top + 4,
                 2,
-                "「Default」出现在这里；再按 a 添加其他账号。",
+                'here as "Default". Then press a to add other accounts.',
                 self.pair(PAIR_DIM),
             )
             return
@@ -214,14 +220,14 @@ class Tui:
             )
 
             x = 5 + name_w + 1
-            tag = "系统自带" if row.is_default else row.color
+            tag = "system" if row.is_default else row.color
             self.put(y, x, pad(tag, 10), base if selected else self.pair(PAIR_DIM))
             x += 11
             if row.running:
                 self.put(
                     y,
                     x,
-                    pad("运行中", 8),
+                    pad("running", 8),
                     base if selected else self.pair(PAIR_RUNNING),
                 )
             else:
@@ -230,15 +236,15 @@ class Tui:
             self.put(y, x, pad(row.size, 7), base if selected else self.pair(PAIR_DIM))
             if not row.has_launcher:
                 self.put(
-                    y, x + 8, "启动器缺失", base if selected else self.pair(PAIR_DIM)
+                    y, x + 8, "no launcher", base if selected else self.pair(PAIR_DIM)
                 )
 
     def _draw_hints(self, y: int, width: int) -> None:
         row = self.current
-        hints = [("↑↓", "选择"), ("Enter", "启动")]
+        hints = [("↑↓", "select"), ("Enter", "launch")]
         if row is not None and not row.is_default:
-            hints += [("c", "配色"), ("d", "删除")]
-        hints += [("a", "新建"), ("r", "刷新"), ("?", "帮助"), ("q", "退出")]
+            hints += [("c", "colour"), ("d", "delete")]
+        hints += [("a", "new"), ("r", "refresh"), ("?", "help"), ("q", "quit")]
         x = 1
         for key, label in hints:
             if x + len(key) + display_width(label) + 3 >= width:
@@ -251,7 +257,7 @@ class Tui:
     # ---------- 交互原语 ----------
 
     def prompt(self, label: str, allowed: str | None = None) -> str | None:
-        """底部单行输入。Enter 确认，Esc 取消。"""
+        """Single-line input at the bottom. Enter confirms, Esc cancels."""
         height, width = self.stdscr.getmaxyx()
         buffer = ""
         curses.curs_set(1)
@@ -281,7 +287,7 @@ class Tui:
             curses.curs_set(0)
 
     def confirm(self, question: str, danger: bool = False) -> bool:
-        """默认为「否」：破坏性操作必须显式按 y。"""
+        """Defaults to no: destructive actions require an explicit y."""
         height, width = self.stdscr.getmaxyx()
         attr = curses.A_BOLD | (
             self.pair(PAIR_RUNNING) if not danger else curses.A_REVERSE
@@ -297,7 +303,7 @@ class Tui:
                 return False
 
     def choose(self, title: str, options: list[str]) -> str | None:
-        """居中弹出的单选列表。↑↓ 移动，Enter 选中，Esc 取消。"""
+        """Centred single-choice list. ↑↓ moves, Enter selects, Esc cancels."""
         index = 0
         while True:
             height, width = self.stdscr.getmaxyx()
@@ -315,7 +321,7 @@ class Tui:
                 attr = curses.A_REVERSE | (curses.A_BOLD if selected else 0)
                 self.put(top + 2 + i, left + 2, pad(mark + option, box_w - 4), attr)
             self.put(
-                top + box_h - 1, left + 2, "Enter 选中 · Esc 取消", curses.A_REVERSE
+                top + box_h - 1, left + 2, "Enter select · Esc cancel", curses.A_REVERSE
             )
             self.stdscr.refresh()
 
@@ -331,21 +337,23 @@ class Tui:
 
     def show_help(self) -> None:
         lines = [
-            "cdp — Claude Desktop 多账号",
+            "cdp - Claude Desktop Profiles",
             "",
-            "↑ ↓ / k j   选择 profile",
-            "Enter       启动（已运行则聚焦其窗口）",
-            "a           新建 profile（随后在其中登录另一个账号）",
-            "c           更换配色与图标",
-            "d           删除（可选是否连数据一起删）",
-            "r           刷新（含重算磁盘占用）",
-            "q           退出",
+            "↑ ↓ / k j   Move between profiles",
+            "Enter       Launch (focuses the window if already running)",
+            "a           New profile (then sign in to another account inside it)",
+            "c           Change colour and icon",
+            "d           Delete (optionally including its data)",
+            "r           Refresh (recomputes disk usage)",
+            "q           Quit",
             "",
-            f"「{DEFAULT_NAME}」是系统已装的 Claude Desktop 本身，",
-            "由安装本身管理，只能启动，不能改色或删除。",
-            "claude:// 登录回调固定由它接管，已登录的账号请继续用它。",
+            f'"{DEFAULT_NAME}" is the Claude Desktop installation you already have.',
+            "It is managed by that installation: launch only, no recolour or delete.",
+            "The claude:// login callback always goes to it, so keep using it",
             "",
-            "按任意键返回",
+            "for the account you are already signed in with.",
+            "",
+            "Press any key to return",
         ]
         height, width = self.stdscr.getmaxyx()
         box_w = min(width - 2, max(display_width(line) for line in lines) + 6)
@@ -371,20 +379,20 @@ class Tui:
             self.message = str(error)
             return
         self.message = (
-            f"「{profile.name}」已在运行，已聚焦其窗口。"
+            f"{profile.name!r} was already running; focused its window."
             if already
-            else f"已启动「{profile.name}」"
+            else f"Launched {profile.name!r}"
         )
         self.poll_running()
 
     def act_add(self) -> None:
-        name = self.prompt("新 profile 名称（字母或数字）：")
+        name = self.prompt("New profile name (letters or digits):")
         if not name:
-            self.message = "已取消新建。" if name is None else "名称不能为空。"
+            self.message = "Cancelled." if name is None else "The name cannot be empty."
             return
-        color = self.choose("选择配色", list(COLORS))
+        color = self.choose("Choose a colour", list(COLORS))
         if color is None:
-            self.message = "已取消新建。"
+            self.message = "Cancelled."
             return
         try:
             profile = manager.add_profile(name, color)
@@ -396,14 +404,18 @@ class Tui:
             if row.name == profile.name:
                 self.cursor = i
                 break
-        self.message = f"已创建「{profile.name}」，按 Enter 启动并在其中登录账号。"
+        self.message = (
+            f"Created {profile.name!r}. Press Enter to launch it and sign in."
+        )
 
     def act_color(self) -> None:
         row = self.current
         if row is None or row.is_default:
-            self.message = f"「{DEFAULT_NAME}」用的是官方图标，不能改配色。"
+            self.message = (
+                f"{DEFAULT_NAME!r} uses the official icon and cannot be recoloured."
+            )
             return
-        color = self.choose(f"「{row.name}」的配色", list(COLORS))
+        color = self.choose(f"Colour for {row.name!r}", list(COLORS))
         if color is None:
             return
         try:
@@ -412,20 +424,21 @@ class Tui:
             self.message = str(error)
             return
         self.reload(with_size=False)
-        self.message = f"「{row.name}」配色已改为 {color}"
+        self.message = f"{row.name!r} recoloured to {color}"
 
     def act_remove(self) -> None:
         row = self.current
         if row is None:
             return
         if row.is_default:
-            self.message = f"「{DEFAULT_NAME}」由 Claude Desktop 安装管理，不能删除。"
+            self.message = f"{DEFAULT_NAME!r} is managed by the Claude Desktop installation and cannot be deleted."
             return
-        if not self.confirm(f"移除「{row.name}」的启动器？"):
-            self.message = "已取消。"
+        if not self.confirm(f"Remove the launcher for {row.name!r}?"):
+            self.message = "Cancelled."
             return
         purge = self.confirm(
-            f"同时删除数据目录？登录态与聊天记录不可恢复（{row.size}）", danger=True
+            f"Delete its data too? Login state and chat history are unrecoverable ({row.size})",
+            danger=True,
         )
         try:
             profile, purged = manager.remove_profile(row.name, purge=purge)
@@ -434,9 +447,9 @@ class Tui:
             return
         self.reload()
         self.message = (
-            f"已删除「{profile.name}」及其数据。"
+            f"Deleted {profile.name!r} and its data."
             if purged
-            else f"已移除「{profile.name}」的启动器，数据保留在 {profile.directory}"
+            else f"Removed the launcher for {profile.name!r}; data kept at {profile.directory}"
         )
 
     # ---------- 主循环 ----------
@@ -471,7 +484,7 @@ class Tui:
                 self.act_remove()
             elif key in (ord("r"), ord("R")):
                 self.reload(with_size=True)
-                self.message = "已刷新。"
+                self.message = "Refreshed."
             elif key in (ord("?"), ord("h")):
                 self.show_help()
 

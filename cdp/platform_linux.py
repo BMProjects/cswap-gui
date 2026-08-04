@@ -36,7 +36,7 @@ def profile_dir(name: str) -> Path:
 
 
 def managed_profile_names() -> list[str]:
-    """cdp 建的 profile 名（不含系统自带的那个），按名称排序。"""
+    """Names of cdp-created profiles (excluding the system one), sorted by name."""
     names = [
         entry.name[len(PROFILE_PREFIX) :]
         for entry in CONFIG_HOME.glob(f"{PROFILE_PREFIX}*")
@@ -54,7 +54,7 @@ def wm_class(slug: str) -> str:
 
 
 def launch_extra_args(profile: Profile) -> list[str]:
-    """--class 让每个 profile 拿到独立 WM_CLASS，任务栏得以分开归组。"""
+    """--class gives each profile its own WM_CLASS so taskbars group them separately."""
     return [f"--class={wm_class(profile.slug)}"]
 
 
@@ -75,10 +75,11 @@ def has_launcher(profile: Profile) -> bool:
 
 
 def _app_processes() -> list[str]:
-    """进程名精确匹配的 Electron 进程命令行。
+    """Command lines of Electron processes matched exactly by process name.
 
-    必须用 pgrep -x 按进程名匹配：chrome_crashpad_handler 的路径里同样含
-    "claude-desktop"，用 -f 会把它连同命令行里出现该词的任意进程一起算进来。
+    pgrep -x (match on process name) is required: chrome_crashpad_handler also
+    has "claude-desktop" in its path, so -f would sweep it up along with any
+    other process that happens to mention the word on its command line.
     """
     try:
         result = subprocess.run(
@@ -102,9 +103,9 @@ def running_profile_dirs() -> set[str]:
 
 
 def default_profile_running() -> bool:
-    """未带 --user-data-dir 启动的主进程即系统自带的那个。
+    """A main process started without --user-data-dir is the system profile.
 
-    渲染、GPU 等子进程带 --type=，只看主进程。
+    Renderer, GPU and other helpers carry --type=; only main processes count.
     """
     return any(
         "--type=" not in line and "--user-data-dir=" not in line
@@ -156,7 +157,7 @@ def write_launcher(profile: Profile) -> None:
         "[Desktop Entry]\n"
         "Type=Application\n"
         f"Name=Claude — {profile.name}\n"
-        f"Comment=Claude Desktop（{profile.name} 账号配置）\n"
+        f"Comment=Claude Desktop ({profile.name} profile)\n"
         f"Exec={exec_line} %U\n"
         f"Icon=claude-profile-{slug}\n"
         "StartupNotify=true\n"
@@ -183,7 +184,7 @@ def refresh_desktop_db() -> None:
 
 
 def spawn(argv: list[str]) -> None:
-    """脱离当前终端启动，父进程退出后应用继续运行。"""
+    """Start detached, so the app keeps running after the parent exits."""
     subprocess.Popen(
         argv,
         start_new_session=True,
@@ -194,21 +195,25 @@ def spawn(argv: list[str]) -> None:
 
 
 def prune_kde_shortcuts() -> tuple[int, int]:
-    """清理 KDE 中堆积的失效 Claude 全局快捷键，返回 (已删, 保留)。
+    """Drop stale Claude global shortcuts accumulated in KDE. Returns (removed, kept).
 
-    Claude Desktop 启动时无条件注册 Ctrl+Alt+Space（应用内硬编码的默认值，
-    不写入 profile 也就无法预先关闭）。每个实例都是一次新注册，而该键已被
-    首个实例占用，后来者绑定失败，只留下一条「生效键为空」的惰性条目并弹出
-    系统设置的冲突提示；profile 删除后这些条目也不会自动消失。
+    Claude Desktop unconditionally registers Ctrl+Alt+Space on startup (a default
+    hard-coded in the app; it is never written into the profile directory, so it
+    cannot be disabled up front). Every instance re-registers it, but the key is
+    already held by the first one, so later instances fail to bind and leave an
+    inert entry behind — which is what raises the conflict prompt in System
+    Settings. Deleting a profile does not clean these up either.
 
-    条目格式 `<hash>-<键>=<生效键>,<默认键>,<说明>`，第一段为空即未绑定，
-    删掉不影响真正生效的那条。
+    Entry format: `<hash>-<key>=<active>,<default>,<description>`. An empty first
+    field means unbound; removing those leaves the one actually in use untouched.
     """
     if not KDE_SHORTCUTS.is_file():
-        raise OSError(f"找不到 {KDE_SHORTCUTS}（非 KDE 桌面？）")
+        raise OSError(f"{KDE_SHORTCUTS} not found (not a KDE desktop?)")
     writer = shutil.which("kwriteconfig6") or shutil.which("kwriteconfig5")
     if writer is None:
-        raise OSError("找不到 kwriteconfig6/5，无法安全修改 KDE 配置")
+        raise OSError(
+            "kwriteconfig6/5 not found; cannot safely modify the KDE configuration"
+        )
 
     removed = kept = 0
     in_group = False

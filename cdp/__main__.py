@@ -1,4 +1,4 @@
-"""cdp 命令行入口。不带子命令时直接打开 TUI。"""
+"""cdp command-line entry point. With no subcommand it opens the TUI."""
 
 from __future__ import annotations
 
@@ -9,22 +9,26 @@ from cdp import manager
 from cdp.core import DEFAULT_NAME, CdpError
 
 EPILOG = f"""\
-「{DEFAULT_NAME}」是系统已安装的 Claude Desktop 本身，自动出现在列表里，
-可启动但不能改色或移除——它由安装本身管理，cdp 从不改动它。
-claude:// 登录回调固定由它接管，所以已登录的账号请继续用它。
+"{DEFAULT_NAME}" is the Claude Desktop installation you already have. It appears in
+the list automatically and can be launched, but not recoloured or removed -- it is
+managed by the installation itself and cdp never modifies it. The claude:// login
+callback is always handled by it, so keep using it for the account you are already
+signed in with.
 
-新建的 profile 数据独立存放，互不共享登录态、设置与 MCP 连接器；
-新账号在其首次启动时自行登录。
+Profiles created by cdp store their data separately and share no login state,
+settings or MCP connectors; sign in to a new account on its first launch.
 
-不带任何参数运行 cdp 会打开交互界面。
+Running cdp with no arguments opens the interactive interface.
 """
 
 
 def _print_table(rows: list[manager.ProfileStatus]) -> None:
     if not rows:
-        print("没有检测到 Claude Desktop 配置。请先正常启动一次 Claude Desktop。")
+        print(
+            "No Claude Desktop configuration found. Start Claude Desktop normally once first."
+        )
         return
-    # 表头一律 ASCII：中文字符宽度与字节数不一致，混排会让列错位。
+    # ASCII headers only: display width and byte count differ for wide characters.
     print(f"{'NAME':<18} {'COLOR':<8} {'STATE':<9} {'SIZE':<7} LAUNCHER")
     for row in rows:
         state = "running" if row.running else "-"
@@ -54,50 +58,60 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_add(args: argparse.Namespace) -> int:
     profile = manager.add_profile(args.name, args.color)
-    print(f"已创建 profile「{profile.name}」({profile.color})")
-    print(f"  数据目录: {profile.directory}")
+    print(f"Created profile {profile.name!r} ({profile.color})")
+    print(f"  Data directory: {profile.directory}")
     print(
-        f"  启动    : cdp launch {profile.name}（或在应用菜单搜索 Claude — {profile.name}）"
+        f"  Launch        : cdp launch {profile.name}  (or search the app menu for Claude - {profile.name})"
     )
-    print("  提示    : 首次启动时在该 profile 内登录另一个账号即可")
+    print("  Next          : sign in to another account on its first launch")
     return 0
 
 
 def cmd_launch(args: argparse.Namespace) -> int:
     profile, already = manager.launch(args.name)
     if already:
-        print(f"「{profile.name}」已在运行，Electron 会聚焦其已有窗口。")
-    print(f"已启动「{profile.name}」")
+        print(
+            f"{profile.name!r} is already running; Electron will focus its existing window."
+        )
+    print(f"Launched {profile.name!r}")
     return 0
 
 
 def cmd_color(args: argparse.Namespace) -> int:
     profile = manager.set_color(args.name, args.color)
-    print(f"profile「{profile.name}」配色已改为 {profile.color}")
+    print(f"Profile {profile.name!r} recoloured to {profile.color}")
     return 0
 
 
 def cmd_remove(args: argparse.Namespace) -> int:
     if args.purge and sys.stdin.isatty():
         target = manager.find_profile(args.name).directory
-        reply = input(f"确认删除数据目录 {target}?（登录态与聊天记录不可恢复）[y/N] ")
+        reply = input(
+            f"Delete the data directory {target}? Login state and chat history are unrecoverable. [y/N] "
+        )
         if not reply.strip().lower().startswith("y"):
-            print("已取消。")
+            print("Cancelled.")
             return 0
     profile, purged = manager.remove_profile(args.name, purge=args.purge)
-    print("已移除启动器与图标。")
+    print("Launcher and icon removed.")
     if purged:
-        print(f"已删除数据目录 {profile.directory}")
+        print(f"Deleted data directory {profile.directory}")
     else:
-        print(f"数据目录保留在 {profile.directory}（加 --purge 可一并删除）")
+        print(
+            f"Data directory kept at {profile.directory}  (add --purge to delete it too)"
+        )
     return 0
 
 
 def cmd_prune(_args: argparse.Namespace) -> int:
     removed, kept = manager.prune_shortcuts()
-    print(f"已清理 {removed} 条失效的 Claude 全局快捷键条目，保留 {kept} 条生效中的。")
+    print(
+        f"Removed {removed} stale Claude global-shortcut entries, kept {kept} live one(s)."
+    )
     if removed:
-        print("提示：注销重登后系统设置界面才会完全同步。")
+        print(
+            "Note: System Settings fully reflects this after you log out and back in."
+        )
     return 0
 
 
@@ -110,22 +124,24 @@ def cmd_tui(_args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cdp",
-        description="Claude Desktop Profiles — 在 Linux 上并行运行多个 Claude Desktop 账号",
+        description="Claude Desktop Profiles - run multiple Claude Desktop accounts side by side on Linux",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subs = parser.add_subparsers(dest="command")
 
-    p_list = subs.add_parser("list", aliases=["ls"], help="列出所有 profile")
+    p_list = subs.add_parser("list", aliases=["ls"], help="list every profile")
     p_list.add_argument(
-        "--porcelain", action="store_true", help="机器可读的制表符分隔输出"
+        "--porcelain", action="store_true", help="machine-readable tab-separated output"
     )
     p_list.add_argument(
-        "--no-size", action="store_true", help="跳过磁盘占用统计（更快）"
+        "--no-size", action="store_true", help="skip disk-usage measurement (faster)"
     )
     p_list.set_defaults(func=cmd_list)
 
-    p_add = subs.add_parser("add", help="新建空 profile 并生成应用菜单启动器")
+    p_add = subs.add_parser(
+        "add", help="create an empty profile and its application-menu launcher"
+    )
     p_add.add_argument("name")
     p_add.add_argument(
         "--color", default="orange", help=" / ".join(manager.color_names())
@@ -133,31 +149,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.set_defaults(func=cmd_add)
 
     p_launch = subs.add_parser(
-        "launch", aliases=["run"], help="启动 profile（已运行则聚焦）"
+        "launch",
+        aliases=["run"],
+        help="launch a profile (focuses it if already running)",
     )
     p_launch.add_argument("name")
     p_launch.set_defaults(func=cmd_launch)
 
-    p_color = subs.add_parser("color", help="更换配色与图标")
+    p_color = subs.add_parser("color", help="change the colour and icon")
     p_color.add_argument("name")
     p_color.add_argument("color", help=" / ".join(manager.color_names()))
     p_color.set_defaults(func=cmd_color)
 
     p_remove = subs.add_parser(
-        "remove", aliases=["rm"], help="移除启动器；--purge 连数据一起删"
+        "remove",
+        aliases=["rm"],
+        help="remove the launcher; --purge deletes the data too",
     )
     p_remove.add_argument("name")
     p_remove.add_argument(
-        "--purge", action="store_true", help="同时删除数据目录（不可恢复）"
+        "--purge",
+        action="store_true",
+        help="also delete the data directory (unrecoverable)",
     )
     p_remove.set_defaults(func=cmd_remove)
 
     p_prune = subs.add_parser(
-        "prune-shortcuts", help="清理 KDE 中堆积的失效 Claude 全局快捷键"
+        "prune-shortcuts", help="clean up stale Claude global shortcuts in KDE"
     )
     p_prune.set_defaults(func=cmd_prune)
 
-    p_tui = subs.add_parser("tui", help="打开交互界面（等同于不带参数运行）")
+    p_tui = subs.add_parser(
+        "tui",
+        help="open the interactive interface (same as running cdp with no arguments)",
+    )
     p_tui.set_defaults(func=cmd_tui)
 
     return parser
